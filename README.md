@@ -4,6 +4,16 @@ A local team of AI bots, **the Guild**. A boss bot plans your goal, lends out Mi
 
 **Status:** early development. `PLAN.md` tracks every work item; `AGENTS.md` has the rules for anyone (human or agent) working on it.
 
+## Screenshots
+
+**A bot window, live** (a real run): Omi's ID card with his action extra (the book = reading), the team strip, the chat, the console and thinking panels on the left, and the File Explorer above the Message Board on the right, with each bot's activity line.
+
+![Omi's bot window during a live run](docs/screenshots/bot-window-live.png)
+
+**Settings → Bots & icons**: the job badges (what kind of bot it is) and the action extras Omi holds while he works.
+
+<img src="docs/screenshots/bots-and-icons.png" alt="Job badges and action extras legend" width="600">
+
 ## Run
 
 ```bash
