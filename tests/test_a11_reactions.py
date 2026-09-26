@@ -1,5 +1,6 @@
-"""GoodLayoutNew.png (user, 2026-09-26): reaction emoji next to Omi's face, and live
-"● Name – what it's doing" lines at the top of the message board."""
+"""GoodLayoutNew.png (user, 2026-09-26): reaction emoji INSIDE Omi's thought bubble (the eyes in the
+mockup mark where the bubble opens; no bubble = no icon), and live "● Name – what it's doing" lines
+at the top of the message board."""
 
 from __future__ import annotations
 
@@ -45,3 +46,27 @@ def test_board_activity_lines():
     b.activity.remove("coder")
     assert not b.activity.isVisible()
     assert isinstance(b.activity, ActivityList)
+
+
+def test_the_reaction_shows_only_inside_the_bubble():
+    from omnibots.ui import theme
+    from omnibots.ui.bubble import bubble_size
+    from omnibots.ui.widgets import BotCard, IDCard
+
+    long = "skimmed the whole thing, twice, and it still reads like a ransom note from a toaster."
+    assert bubble_size(long, None, emoji="👀")[1] > bubble_size(long, None)[1]                     # room for the icon
+    card = IDCard(BotCard(name="Omi", role="boss", status="Working", tagline="", seat="", model="", usage_pct=0,
+                          accent=theme.ACCENT))
+    card.resize(340, 250)
+    assert not hasattr(card, "reactions")                                  # no separate, always-on reaction row
+    anim = card.face.anim
+    anim.say(Quip("skimmed the whole thing.", "happy", emoji="👀"))
+    anim.advance(1.0)
+    shown = card.overlay.grab().toImage()
+    anim.advance(30.0)                                                     # the bubble fades, and with it the icon
+    assert anim.bubble is None and anim.reactions                          # the record stays; nothing draws it
+    gone = card.overlay.grab().toImage()
+
+    def painted(img):
+        return sum(img.pixelColor(x, y).alpha() > 0 for x in range(0, img.width(), 4) for y in range(0, img.height(), 4))
+    assert painted(shown) > 100 and painted(gone) == 0

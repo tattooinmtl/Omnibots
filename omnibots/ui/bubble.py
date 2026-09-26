@@ -39,7 +39,9 @@ def cloud_path(r: QRectF, bump: float = 16.0) -> QPainterPath:
 
 
 def draw_thought_bubble(p: QPainter, rect: QRectF, text: str, tail_to: QPointF, *,
-                        grawlix: str | None = None, font_px: int = 15, outline: float = 3.0) -> None:
+                        grawlix: str | None = None, font_px: int = 15, outline: float = 3.0, emoji: str | None = None) -> None:
+    """The cloud with its puffs toward the head; inside: the reaction emoji (👍 👀 😮 …) on top,
+    then a grumble's grawlix, then the words. The emoji lives only in the bubble (user, 2026-09-26)."""
     p.save()
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     pen = QPen(INK, outline)
@@ -63,6 +65,13 @@ def draw_thought_bubble(p: QPainter, rect: QRectF, text: str, tail_to: QPointF, 
     # text
     inner = rect.adjusted(22, 16, -22, -16)
     y = inner.top()
+    if emoji:
+        f = QFont("Segoe UI Emoji")
+        f.setPixelSize(int(font_px * EMOJI_SCALE))
+        p.setFont(f)
+        h = QFontMetricsF(f).height()
+        p.drawText(QRectF(inner.left(), y, inner.width(), h), Qt.AlignmentFlag.AlignHCenter, emoji)
+        y += h * 0.9
     if grawlix:
         f = QFont("Comic Sans MS")
         f.setBold(True)
@@ -81,10 +90,18 @@ def draw_thought_bubble(p: QPainter, rect: QRectF, text: str, tail_to: QPointF, 
     p.restore()
 
 
-def bubble_size(text: str, grawlix: str | None, font_px: int = 15, width: float = 230) -> tuple[float, float]:
+EMOJI_SCALE = 1.7
+
+
+def bubble_size(text: str, grawlix: str | None, font_px: int = 15, width: float = 230,
+                emoji: str | None = None) -> tuple[float, float]:
     f = QFont("Comic Sans MS")
     f.setPixelSize(font_px)
     fm = QFontMetricsF(f)
     lines = fm.boundingRect(QRectF(0, 0, width - 44, 1000), int(Qt.TextFlag.TextWordWrap), text).height()
     extra = fm.height() * 1.45 if grawlix else 0
+    if emoji:
+        ef = QFont("Segoe UI Emoji")
+        ef.setPixelSize(int(font_px * EMOJI_SCALE))
+        extra += QFontMetricsF(ef).height() * 0.9
     return width, max(78.0, lines + extra + 40)

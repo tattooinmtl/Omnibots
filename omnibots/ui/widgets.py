@@ -152,8 +152,6 @@ class IDCard(GlassPanel):
         self.tagline.setObjectName("dim")
         self.tagline.setWordWrap(True)
         info.addStretch(1)
-        self.reactions = ReactionRow(self.face.anim)
-        info.addWidget(self.reactions)
         for w in (self.name, self.status, self.tagline):
             info.addWidget(w)
         info.addSpacing(8)
@@ -186,36 +184,6 @@ class IDCard(GlassPanel):
         self.status.setText(f"<span style='color:{col}'>●</span>&nbsp; {c.status}")
         self.facts.setText(f"{c.role} · {c.seat}<br>{c.model}")
         self.usage.set_value(c.usage_pct)
-
-
-class ReactionRow(QWidget):
-    """Omi's latest reactions (👍 👀 😮 …) next to his face: each new one pops in with a
-    little overshoot; the row keeps the last three, older ones slightly faded."""
-
-    def __init__(self, anim: FaceAnimator, parent=None):
-        super().__init__(parent)
-        self.anim = anim
-        self.setFixedHeight(40)
-        self._t = QTimer(self)
-        self._t.timeout.connect(self.update)
-        self._t.start(33)
-
-    def paintEvent(self, _ev) -> None:
-        if not self.anim.reactions:
-            return
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        f = QFont("Segoe UI Emoji")
-        n = len(self.anim.reactions)
-        for i, (emoji, when) in enumerate(self.anim.reactions):
-            age = self.anim.t - when
-            pop = min(1.0, max(0.0, age / 0.35))
-            scale = 1 + 0.35 * math.sin(math.pi * pop) if pop < 1 else 1.0          # pop-in overshoot
-            f.setPixelSize(max(1, int(26 * scale * (0.5 + 0.5 * pop))))
-            p.setFont(f)
-            p.setOpacity(1.0 if i == n - 1 else 0.78 + 0.1 * i)                       # newest brightest, older still clear
-            p.drawText(QRectF(i * 38, 0, 38, 40), Qt.AlignmentFlag.AlignCenter, emoji)
-        p.end()
 
 
 class BubbleOverlay(QWidget):

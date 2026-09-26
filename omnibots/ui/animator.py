@@ -58,7 +58,7 @@ class FaceAnimator:
         self.bubble: _Bubble | None = None
         self.grawlix_cycle = ["@#%$", "@$#%", "^%&$", "$%#%"]
         self.look = (0.0, 0.0)
-        self.reactions: list[tuple[str, float]] = []      # (emoji, when), newest last, at most 3
+        self.reactions: list[tuple[str, float]] = []      # (emoji, when), newest last, at most 3 (a record; drawn only in the bubble)
 
     # ── inputs ─────────────────────────────────────────────────────────────
     def set_action(self, action: str | None) -> None:
@@ -70,7 +70,8 @@ class FaceAnimator:
             self._prev_mood, self.mood, self._fade = self.mood, mood, 0.0
 
     def react(self, emoji: str) -> None:
-        """Pop a reaction emoji next to the face (👍 👀 😮 …); keeps the last three."""
+        """Record a reaction (👍 👀 😮 …); keeps the last three. It is SHOWN only inside the
+        thought bubble with its message (say()), never on its own."""
         self.reactions = (self.reactions + [(emoji, self.t)])[-3:]
 
     def say(self, quip: Quip) -> None:
@@ -156,13 +157,14 @@ class FaceAnimator:
         if sx <= 0.01:
             return
         text, grawlix = self.bubble_text()
-        w, h = bubble_size(self.bubble.quip.text, self.bubble.quip.grawlix, width=max_w)
+        emoji = self.bubble.quip.emoji
+        w, h = bubble_size(self.bubble.quip.text, self.bubble.quip.grawlix, width=max_w, emoji=emoji)
         rect = QRectF(anchor.x(), anchor.y() - h, w, h)
         p.save()
         p.translate(anchor)                                   # grow from the corner nearest the face
         p.scale(sx, sy)
         p.translate(-anchor)
-        draw_thought_bubble(p, rect, text, head, grawlix=grawlix)
+        draw_thought_bubble(p, rect, text, head, grawlix=grawlix, emoji=emoji)
         p.restore()
 
     def frame(self, size: int, *, width: int | None = None) -> QImage:
