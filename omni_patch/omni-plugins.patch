@@ -1,0 +1,511 @@
+diff --git a/schema/omni.config.schema.json b/schema/omni.config.schema.json
+index e8f6ac0..440f99d 100644
+--- a/schema/omni.config.schema.json
++++ b/schema/omni.config.schema.json
+@@ -20,6 +20,11 @@
+       "description": "Extension JS modules to load. Each default-exports { name, tools, impl }.",
+       "items": { "type": "string" }
+     },
++    "plugins": {
++      "type": "array",
++      "description": "Extra plugin folders (absolute, or relative to the install root). Each holds an omni-plugin.json whose commands launch external programs. Folders under plugins/ are auto-discovered and need no entry here.",
++      "items": { "type": "string" }
++    },
+     "skills": {
+       "type": "array",
+       "description": "Skill directories. Each contains a SKILL.md with frontmatter (name, command, description).",
+diff --git a/src/cli/commands.mjs b/src/cli/commands.mjs
+index 30599f0..cec25e8 100644
+--- a/src/cli/commands.mjs
++++ b/src/cli/commands.mjs
+@@ -891,6 +891,22 @@ export const COMMANDS = [
+     summary: "NimTools bridge status",
+     handler: () => infoLine(bridgeStatus()),
+   },
++  {
++    name: "plugins", aliases: [], usage: "/plugins", category: "Packages & Integrations",
++    summary: "list loaded plugins (omni-plugin.json) and their commands",
++    handler: (ctx) => {
++      const info = ctx.pluginInfo || { plugins: [], errors: [] };
++      if (!info.plugins.length && !info.errors.length) {
++        infoLine("no plugins — add a folder with omni-plugin.json to plugins/ or to \"plugins\" in omni.config.json");
++        return;
++      }
++      for (const p of info.plugins) {
++        console.log(`    ${p.name.padEnd(24)} ${c.dim(`${p.version || "?"}  ${p.dir}`)}`);
++        for (const cmd of p.commands) console.log(`      /${cmd.name}`);
++      }
++      for (const e of info.errors) warnLine(e);
++    },
++  },
+ ];
+ 
+ // /provider subcommand tree (kept out of the registry entry for readability).
+@@ -1024,6 +1040,18 @@ for (const cmd of COMMANDS) {
+   for (const a of cmd.aliases) byName.set(a, cmd);
+ }
+ 
++// Add a command at runtime (plugin commands, loaded after this module).
++// Refuses a name or alias that is already taken so a plugin can never shadow
++// a built-in. Returns true when registered.
++export function registerCommand(cmd) {
++  const names = [cmd.name, ...(cmd.aliases || []).filter(Boolean)].map((n) => String(n).toLowerCase());
++  if (!cmd.name || names.some((n) => byName.has(n))) return false;
++  const entry = { aliases: [], ...cmd };
++  COMMANDS.push(entry);
++  for (const n of names) byName.set(n, entry);
++  return true;
++}
++
+ export function findCommand(name) {
+   return byName.get(String(name || "").toLowerCase()) || null;
+ }
+@@ -1072,7 +1100,7 @@ export function suggestCommand(name) {
+ }
+ 
+ export function printHelp(ctx) {
+-  const categories = ["Session", "Agent", "Models & Providers", "Packages & Integrations"];
++  const categories = ["Session", "Agent", "Models & Providers", "Packages & Integrations", "Plugins"];
+   console.log("");
+   for (const cat of categories) {
+     console.log(c.bold(`  ${cat}`));
+diff --git a/src/cli/main.mjs b/src/cli/main.mjs
+index 98aa67a..13312d8 100644
+--- a/src/cli/main.mjs
++++ b/src/cli/main.mjs
+@@ -14,6 +14,8 @@ import {
+   installPackage, uninstallPackage, listInstalled, searchRegistry, DEFAULT_REGISTRY,
+ } from "../integrations/registry.mjs";
+ import { registerMcpProxy, disconnectAll as disconnectMcpServers } from "../integrations/mcp.mjs";
++import { loadPlugins, buildPluginCommands } from "../integrations/plugins.mjs";
++import { registerCommand, findCommand, dispatchCommand } from "./commands.mjs";
+ import { registerNimToolsProxy, disconnectBridge } from "../integrations/bridge.mjs";
+ import { classifyIntent, warmSidecar, killSidecar } from "../integrations/router.mjs";
+ import { shutdownAll as shutdownLspServers } from "../integrations/lsp.mjs";
+@@ -66,6 +68,17 @@ export async function main(args) {
+   const skills = loadSkills(project);
+   const skillByCommand = new Map(skills.map((s) => [s.command, s]));
+ 
++  // Plugins: omni-plugin.json folders that add /commands launching external
++  // programs (e.g. /omnibots). A name already used by a built-in command or a
++  // skill is skipped and reported — plugins never shadow either.
++  const pluginInfo = loadPlugins(project);
++  const pluginCmds = buildPluginCommands(pluginInfo.plugins, {
++    isTaken: (name) => Boolean(findCommand(name)) || skillByCommand.has("/" + name),
++  });
++  for (const cmd of pluginCmds.commands) registerCommand(cmd);
++  pluginInfo.errors.push(...pluginCmds.errors);
++  for (const e of pluginInfo.errors) warnLine(`plugin: ${e}`);
++
+   // MCP: register the single `mcp` proxy tool. Connections are lazy.
+   const mcpInfo = registerMcpProxy(loadMcpConfig(project));
+ 
+@@ -194,6 +207,7 @@ export async function main(args) {
+     project,
+     skills,
+     skillByCommand,
++    pluginInfo,
+     loadedExtensions,
+     mcpInfo,
+     routerCfg,
+@@ -221,6 +235,15 @@ export async function main(args) {
+   // One-shot mode: `omni "do this"` or `omni /skill args` runs once and exits.
+   const promptArg = args.filter((a) => !a.startsWith("--")).join(" ").trim();
+   if (promptArg) {
++    const firstArg = promptArg.split(/\s+/)[0];
++    // `omni /omnibots` — a plugin command launches its program; no model turn.
++    const pluginCmd = firstArg.startsWith("/") ? findCommand(firstArg.slice(1)) : null;
++    if (pluginCmd?.plugin) {
++      await dispatchCommand(ctx, firstArg.slice(1), promptArg.slice(firstArg.length).trim(), promptArg.split(/\s+/));
++      stopBackgroundChildren();
++      await shutdown(0);
++      return;
++    }
+     if (reportMissingKey(ctx.model)) {
+       await shutdown(1);
+       return;
+diff --git a/src/integrations/plugins.mjs b/src/integrations/plugins.mjs
+new file mode 100644
+index 0000000..e854cba
+--- /dev/null
++++ b/src/integrations/plugins.mjs
+@@ -0,0 +1,207 @@
++// Plugins: external programs that add /slash commands.
++//
++// Skills inject instructions and extensions add model-callable tools; neither
++// can launch a separate app when the user types a command. A plugin can. It is
++// a folder holding an omni-plugin.json manifest:
++//
++//   {
++//     "name": "omnibots",
++//     "version": "0.1.0",
++//     "description": "Multi-agent bot board (PySide6 desktop app).",
++//     "commands": [{
++//       "name": "omnibots",
++//       "usage": "/omnibots",
++//       "summary": "open the OmniBots control window",
++//       "run": {
++//         "command": "pythonw",
++//         "args": ["-m", "omnibots"],
++//         "cwd": "{{PLUGIN_DIR}}",
++//         "env": { "OMNIBOTS_LAUNCHED_BY": "omni" },
++//         "wait": false
++//       }
++//     }]
++//   }
++//
++// Plugin folders are found in two places:
++//   1. every <install>/plugins/<name>/omni-plugin.json (auto-discovered), and
++//   2. every path listed under "plugins" in omni.config.json — absolute, or
++//      relative to the install root — so a plugin can live in its own project
++//      folder (e.g. C:/omnibots) without being copied into Omni.
++//
++// Placeholders in cwd/args/env values: {{INSTALL_ROOT}}, {{OMNI_HOME}},
++// {{PLUGIN_DIR}}, {{CWD}}. The child always gets OMNI_HOME, OMNI_INSTALL_ROOT
++// and OMNI_PLUGIN_DIR so it can read Omni's settings without guessing.
++//
++// "wait": false (the default) launches detached and returns at once — the
++// right mode for GUI apps. "wait": true runs the program in the terminal and
++// returns when it exits.
++//
++// Trust: a plugin runs a program, the same trust level as an extension. Only
++// folders inside the install root or listed explicitly in omni.config.json are
++// ever loaded.
++
++import fs from "node:fs";
++import path from "node:path";
++import { spawn } from "node:child_process";
++import { INSTALL_ROOT } from "../paths.mjs";
++import { HOME } from "../core/config.mjs";
++import { infoLine } from "../ui.mjs";
++
++export const PLUGINS_DIR = path.join(INSTALL_ROOT, "plugins");
++export const MANIFEST_NAME = "omni-plugin.json";
++
++const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
++
++// Folders to try, deduped, in load order: auto-discovered first, then config.
++export function discoverPluginDirs(config = {}, { pluginsDir = PLUGINS_DIR, root = INSTALL_ROOT } = {}) {
++  const dirs = [];
++  try {
++    for (const entry of fs.readdirSync(pluginsDir, { withFileTypes: true })) {
++      if (entry.isDirectory() && fs.existsSync(path.join(pluginsDir, entry.name, MANIFEST_NAME))) {
++        dirs.push(path.join(pluginsDir, entry.name));
++      }
++    }
++  } catch { /* no plugins/ folder — fine */ }
++  for (const p of Array.isArray(config.plugins) ? config.plugins : []) {
++    if (typeof p === "string" && p.trim()) dirs.push(path.resolve(root, p.trim()));
++  }
++  const seen = new Set();
++  return dirs.filter((d) => {
++    const key = path.normalize(d).toLowerCase();
++    if (seen.has(key)) return false;
++    seen.add(key);
++    return true;
++  });
++}
++
++// Parse and validate one manifest. Throws with a message fit for the banner.
++export function readPluginManifest(dir) {
++  const file = path.join(dir, MANIFEST_NAME);
++  let m;
++  try {
++    m = JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
++  } catch (e) {
++    throw new Error(e.code === "ENOENT" ? `no ${MANIFEST_NAME} in ${dir}` : `${file}: ${e.message}`);
++  }
++  if (!m || typeof m !== "object") throw new Error(`${file}: manifest must be an object`);
++  if (!NAME_RE.test(m.name || "")) throw new Error(`${file}: "name" must match ${NAME_RE}`);
++  if (!Array.isArray(m.commands) || !m.commands.length) throw new Error(`${m.name}: "commands" must be a non-empty array`);
++  for (const cmd of m.commands) {
++    if (!NAME_RE.test(cmd?.name || "")) throw new Error(`${m.name}: command name "${cmd?.name}" must match ${NAME_RE}`);
++    const run = cmd.run;
++    if (!run || typeof run.command !== "string" || !run.command.trim()) {
++      throw new Error(`${m.name}/${cmd.name}: "run.command" is required`);
++    }
++    if (run.args !== undefined && !(Array.isArray(run.args) && run.args.every((a) => typeof a === "string"))) {
++      throw new Error(`${m.name}/${cmd.name}: "run.args" must be an array of strings`);
++    }
++    if (run.env !== undefined && (typeof run.env !== "object" || Array.isArray(run.env) ||
++        !Object.values(run.env).every((v) => typeof v === "string"))) {
++      throw new Error(`${m.name}/${cmd.name}: "run.env" must map names to strings`);
++    }
++  }
++  return { ...m, dir };
++}
++
++// Every plugin that loads, plus one error line per plugin that didn't.
++export function loadPlugins(config = {}, opts = {}) {
++  const plugins = [];
++  const errors = [];
++  for (const dir of discoverPluginDirs(config, opts)) {
++    try {
++      plugins.push(readPluginManifest(dir));
++    } catch (e) {
++      errors.push(e.message);
++    }
++  }
++  return { plugins, errors };
++}
++
++export function expandPlaceholders(value, vars) {
++  return String(value).replace(/\{\{(\w+)\}\}/g, (whole, key) => (key in vars ? vars[key] : whole));
++}
++
++// Resolve a command's run block into concrete spawn arguments.
++export function buildLaunch(plugin, cmd, argString = "", { home = HOME, root = INSTALL_ROOT, cwd = process.cwd(), env = process.env } = {}) {
++  const vars = { INSTALL_ROOT: root, OMNI_HOME: home, PLUGIN_DIR: plugin.dir, CWD: cwd };
++  const run = cmd.run;
++  const extra = String(argString || "").trim() ? String(argString).trim().split(/\s+/) : [];
++  const childEnv = {
++    ...env,
++    OMNI_HOME: home,
++    OMNI_INSTALL_ROOT: root,
++    OMNI_PLUGIN_DIR: plugin.dir,
++  };
++  for (const [k, v] of Object.entries(run.env || {})) childEnv[k] = expandPlaceholders(v, vars);
++  return {
++    command: expandPlaceholders(run.command, vars),
++    args: [...(run.args || []).map((a) => expandPlaceholders(a, vars)), ...extra],
++    cwd: run.cwd ? path.resolve(plugin.dir, expandPlaceholders(run.cwd, vars)) : plugin.dir,
++    env: childEnv,
++    wait: run.wait === true,
++  };
++}
++
++// Start the program. Resolves { pid } once the OS has started it (detached),
++// or { pid, code } after it exits (wait: true). Rejects when it cannot start
++// at all — e.g. ENOENT for a missing interpreter — so the user sees why.
++export function launch(spec, { spawnImpl = spawn } = {}) {
++  return new Promise((resolve, reject) => {
++    let child;
++    try {
++      child = spawnImpl(spec.command, spec.args, {
++        cwd: spec.cwd,
++        env: spec.env,
++        detached: !spec.wait,
++        stdio: spec.wait ? "inherit" : "ignore",
++        windowsHide: false,
++      });
++    } catch (e) {
++      reject(e);
++      return;
++    }
++    child.once("error", (e) => reject(new Error(`could not start ${spec.command}: ${e.message}`)));
++    if (spec.wait) {
++      child.once("exit", (code) => resolve({ pid: child.pid, code }));
++    } else {
++      child.once("spawn", () => {
++        child.unref();
++        resolve({ pid: child.pid });
++      });
++    }
++  });
++}
++
++// Command registry entries for every plugin command. Names already taken
++// (built-in commands, or an earlier plugin) are skipped and reported.
++export function buildPluginCommands(plugins, { isTaken = () => false, launchImpl = launch } = {}) {
++  const commands = [];
++  const errors = [];
++  const claimed = new Set();
++  for (const plugin of plugins) {
++    for (const cmd of plugin.commands) {
++      if (isTaken(cmd.name) || claimed.has(cmd.name)) {
++        errors.push(`${plugin.name}: /${cmd.name} is already a command — skipped`);
++        continue;
++      }
++      claimed.add(cmd.name);
++      commands.push({
++        name: cmd.name,
++        aliases: [],
++        usage: cmd.usage || `/${cmd.name}`,
++        summary: cmd.summary || plugin.description || `run the ${plugin.name} plugin`,
++        category: "Plugins",
++        plugin: plugin.name,
++        handler: async (_ctx, arg) => {
++          const spec = buildLaunch(plugin, cmd, arg);
++          const { pid, code } = await launchImpl(spec);
++          infoLine(spec.wait
++            ? `${plugin.name}: /${cmd.name} exited with code ${code}`
++            : `${plugin.name}: /${cmd.name} started (pid ${pid})`);
++          return { pid, code, plugin: plugin.name };
++        },
++      });
++    }
++  }
++  return { commands, errors };
++}
+diff --git a/tests/plugins.test.mjs b/tests/plugins.test.mjs
+new file mode 100644
+index 0000000..f1e1f01
+--- /dev/null
++++ b/tests/plugins.test.mjs
+@@ -0,0 +1,166 @@
++// Plugins: omni-plugin.json folders that add /commands launching programs.
++//
++// Covers discovery (plugins/ + config paths, deduped), manifest validation,
++// placeholder expansion, collision handling (a plugin must never shadow a
++// built-in), runtime registration, and a real detached launch of `node`.
++//
++// Run: node tests/plugins.test.mjs
++
++import assert from "node:assert/strict";
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++
++const home = fs.mkdtempSync(path.join(os.tmpdir(), "omni-plugtest-"));
++process.env.OMNI_HOME = home;
++
++const {
++  discoverPluginDirs, readPluginManifest, loadPlugins, buildLaunch,
++  buildPluginCommands, launch, MANIFEST_NAME,
++} = await import("../src/integrations/plugins.mjs");
++const { registerCommand, findCommand, COMMANDS } = await import("../src/cli/commands.mjs");
++
++let pass = 0, fail = 0;
++async function test(name, fn) {
++  try { await fn(); console.log(`  ✓ ${name}`); pass++; }
++  catch (e) { console.error(`  ✗ ${name}: ${e.message}`); fail++; }
++}
++
++const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "omni-plugins-"));
++function makePlugin(parent, folder, manifest) {
++  const dir = path.join(parent, folder);
++  fs.mkdirSync(dir, { recursive: true });
++  fs.writeFileSync(path.join(dir, MANIFEST_NAME), typeof manifest === "string" ? manifest : JSON.stringify(manifest));
++  return dir;
++}
++const good = (name, cmd = name) => ({
++  name, version: "1.0.0", description: `${name} plugin`,
++  commands: [{ name: cmd, run: { command: "node", args: ["-e", "0"] } }],
++});
++
++const pluginsDir = path.join(tmp, "plugins");
++const autoDir = makePlugin(pluginsDir, "alpha", good("alpha"));
++fs.mkdirSync(path.join(pluginsDir, "not-a-plugin"), { recursive: true });
++const externalDir = makePlugin(tmp, "external", good("beta"));
++
++console.log("\nPlugin discovery & manifests:");
++
++await test("discovers plugins/ folders with a manifest and config paths, deduped", () => {
++  const dirs = discoverPluginDirs({ plugins: [externalDir, externalDir.toUpperCase(), autoDir] }, { pluginsDir, root: tmp });
++  assert.deepEqual(dirs, [autoDir, externalDir]);
++});
++
++await test("relative config paths resolve against the install root", () => {
++  const dirs = discoverPluginDirs({ plugins: ["external"] }, { pluginsDir: path.join(tmp, "none"), root: tmp });
++  assert.deepEqual(dirs, [externalDir]);
++});
++
++await test("a manifest with a UTF-8 BOM still parses", () => {
++  const dir = makePlugin(tmp, "bom", "\uFEFF" + JSON.stringify(good("bom")));
++  assert.equal(readPluginManifest(dir).name, "bom");
++});
++
++await test("invalid manifests are reported, not thrown past loadPlugins", () => {
++  const bad = [
++    makePlugin(tmp, "bad-json", "{nope"),
++    makePlugin(tmp, "bad-name", good("Bad Name")),
++    makePlugin(tmp, "no-cmds", { name: "no-cmds", commands: [] }),
++    makePlugin(tmp, "no-run", { name: "no-run", commands: [{ name: "x" }] }),
++    makePlugin(tmp, "bad-args", { name: "bad-args", commands: [{ name: "x", run: { command: "node", args: "oops" } }] }),
++    path.join(tmp, "missing"),
++  ];
++  const { plugins, errors } = loadPlugins({ plugins: bad }, { pluginsDir: path.join(tmp, "none"), root: tmp });
++  assert.equal(plugins.length, 0);
++  assert.equal(errors.length, bad.length, errors.join("\n"));
++});
++
++console.log("\nLaunch specs:");
++
++await test("placeholders expand; OMNI_HOME/INSTALL_ROOT/PLUGIN_DIR reach the child env", () => {
++  const plugin = { name: "p", dir: externalDir, commands: [] };
++  const cmd = { name: "p", run: {
++    command: "node", args: ["{{PLUGIN_DIR}}/main.js", "--home={{OMNI_HOME}}"],
++    cwd: "{{INSTALL_ROOT}}", env: { WHERE: "{{CWD}}", KEEP: "{{UNKNOWN}}" },
++  } };
++  const spec = buildLaunch(plugin, cmd, " one  two ", { home: "H", root: tmp, cwd: "C", env: { PATH: "x" } });
++  assert.equal(spec.command, "node");
++  assert.deepEqual(spec.args, [`${externalDir}/main.js`, "--home=H", "one", "two"]);
++  assert.equal(spec.cwd, tmp);
++  assert.equal(spec.env.OMNI_HOME, "H");
++  assert.equal(spec.env.OMNI_INSTALL_ROOT, tmp);
++  assert.equal(spec.env.OMNI_PLUGIN_DIR, externalDir);
++  assert.equal(spec.env.WHERE, "C");
++  assert.equal(spec.env.KEEP, "{{UNKNOWN}}");
++  assert.equal(spec.env.PATH, "x");
++  assert.equal(spec.wait, false);
++});
++
++await test("cwd defaults to the plugin folder", () => {
++  const spec = buildLaunch({ name: "p", dir: externalDir }, { name: "p", run: { command: "node" } }, "");
++  assert.equal(spec.cwd, externalDir);
++  assert.deepEqual(spec.args, []);
++});
++
++await test("detached launch of a real program resolves with a pid", async () => {
++  const marker = path.join(tmp, "launched.txt");
++  const spec = {
++    command: process.execPath,
++    args: ["-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, process.env.OMNI_PLUGIN_DIR)`],
++    cwd: tmp, env: { ...process.env, OMNI_PLUGIN_DIR: "ok" }, wait: false,
++  };
++  const { pid } = await launch(spec);
++  assert.ok(pid > 0);
++  for (let i = 0; i < 50 && !fs.existsSync(marker); i++) await new Promise((r) => setTimeout(r, 100));
++  assert.equal(fs.readFileSync(marker, "utf8"), "ok");
++});
++
++await test("wait:true returns the exit code", async () => {
++  const r = await launch({ command: process.execPath, args: ["-e", "process.exit(3)"], cwd: tmp, env: process.env, wait: true });
++  assert.equal(r.code, 3);
++});
++
++await test("a missing program rejects with a readable error", async () => {
++  await assert.rejects(
++    launch({ command: "definitely-not-a-real-program-xyz", args: [], cwd: tmp, env: process.env, wait: false }),
++    /could not start definitely-not-a-real-program-xyz/,
++  );
++});
++
++console.log("\nCommand registration:");
++
++await test("plugin commands never shadow built-ins or each other", () => {
++  const { commands, errors } = buildPluginCommands(
++    [good("one", "help"), good("two", "dup"), good("three", "dup"), good("four", "four")],
++    { isTaken: (n) => Boolean(findCommand(n)) },
++  );
++  assert.deepEqual(commands.map((c) => c.name), ["dup", "four"]);
++  assert.equal(errors.length, 2);
++  assert.ok(commands.every((c) => c.category === "Plugins" && typeof c.handler === "function"));
++});
++
++await test("registerCommand adds a findable command and refuses a taken name", () => {
++  const before = COMMANDS.length;
++  const cmd = { name: "zz-plugin-test", usage: "/zz-plugin-test", summary: "t", category: "Plugins", handler: () => {} };
++  assert.equal(registerCommand(cmd), true);
++  assert.equal(findCommand("zz-plugin-test").name, "zz-plugin-test");
++  assert.equal(COMMANDS.length, before + 1);
++  assert.equal(registerCommand({ ...cmd }), false);
++  assert.equal(registerCommand({ ...cmd, name: "help" }), false);
++  assert.equal(COMMANDS.length, before + 1);
++});
++
++await test("the handler launches through the injected launcher", async () => {
++  const calls = [];
++  const plugin = { ...good("gui"), dir: externalDir };
++  const { commands } = buildPluginCommands([plugin], {
++    launchImpl: async (spec) => { calls.push(spec); return { pid: 42 }; },
++  });
++  const r = await commands[0].handler({}, "--flag");
++  assert.equal(r.pid, 42);
++  assert.deepEqual(calls[0].args, ["-e", "0", "--flag"]);
++});
++
++fs.rmSync(tmp, { recursive: true, force: true });
++fs.rmSync(home, { recursive: true, force: true });
++console.log(`\n${pass} passed, ${fail} failed`);
++process.exit(fail ? 1 : 0);

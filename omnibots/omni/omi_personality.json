@@ -1,0 +1,122 @@
+{
+  "FUNNY_WORDS": [
+    "Tenderising",
+    "Summarising",
+    "Synthesising",
+    "Optimising",
+    "Philosophising",
+    "Fantasising",
+    "Improvising",
+    "Advertising",
+    "Surmising",
+    "Revising",
+    "Supervising",
+    "Categorising",
+    "Prioritising",
+    "Visualising",
+    "Energising",
+    "Mesmerising",
+    "Philanthropising",
+    "Bamboozlising",
+    "Frobnicising",
+    "Pixelising",
+    "Noodleising",
+    "Confabulising",
+    "Wobblising",
+    "Sarcasmising",
+    "Marinising",
+    "Percolising",
+    "Spelunkising",
+    "Doodleising",
+    "Snacklising",
+    "Ponderising"
+  ],
+  "ACTION_LINES": {
+    "coding": {
+      "cheer": [
+        "patch applied clean.",
+        "shipped it.",
+        "diff looks good from here.",
+        "code's in — fingers crossed."
+      ],
+      "grumble": [
+        "that edit didn't take.",
+        "patch rejected. rude.",
+        "well, that write failed spectacularly.",
+        "code and I are not speaking right now."
+      ]
+    },
+    "reading": {
+      "cheer": [
+        "skimmed the whole thing.",
+        "found what we needed.",
+        "read receipts: confirmed.",
+        "nothing gets past me."
+      ],
+      "grumble": [
+        "couldn't make sense of that file.",
+        "the filesystem is hiding things again.",
+        "that read bounced.",
+        "page not found, so to speak."
+      ]
+    },
+    "searching": {
+      "cheer": [
+        "found it — barely broke a sweat.",
+        "needle located in haystack.",
+        "search complete, ego intact.",
+        "nailed the query."
+      ],
+      "grumble": [
+        "the internet is hiding something.",
+        "zero results. shocking, I know.",
+        "that search went nowhere.",
+        "even I can't find that."
+      ]
+    },
+    "running": {
+      "cheer": [
+        "command executed, ego intact.",
+        "ran clean, no drama.",
+        "process behaved itself.",
+        "exit code 0, as it should be."
+      ],
+      "grumble": [
+        "that exit code was NOT a vibe.",
+        "the shell and I disagree.",
+        "command bailed on me.",
+        "well, THAT crashed."
+      ]
+    },
+    "thinking": {
+      "cheer": [
+        "brain dump complete.",
+        "thought that one through.",
+        "reasoning: solid. mostly.",
+        "and... done."
+      ],
+      "grumble": [
+        "lost my train of thought.",
+        "that reasoning went in circles.",
+        "brain fog — send coffee.",
+        "still not sure what happened there."
+      ]
+    },
+    "provider": {
+      "grumble": [
+        "rate limited. typical.",
+        "the API said no.",
+        "network's having a moment.",
+        "getting throttled again, great."
+      ]
+    }
+  },
+  "IMPATIENT": [
+    "still thinking... unlike me, apparently.",
+    "any day now.",
+    "I've seen glaciers move faster.",
+    "is it the wifi? it's the wifi, isn't it.",
+    "taking notes for my memoir: 'The Great Wait'.",
+    "beep. boop. still waiting."
+  ]
+}

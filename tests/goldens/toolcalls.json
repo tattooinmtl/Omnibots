@@ -1,0 +1,1858 @@
+{
+ "omni_version": "3.5.6",
+ "tool_defs": [
+  {
+   "type": "function",
+   "function": {
+    "name": "read_file",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "offset": {
+       "type": "integer"
+      },
+      "limit": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "read_many_files",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "paths": {
+       "type": "array"
+      },
+      "limit_per_file": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "write_file",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "content": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "edit_file",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "old_string": {
+       "type": "string"
+      },
+      "new_string": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "edit_lines",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "start_line": {
+       "type": "integer"
+      },
+      "end_line": {
+       "type": "integer"
+      },
+      "new_string": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "apply_patch",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "patch": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "list_dir",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "recursive": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "pattern": {
+       "type": "string"
+      },
+      "path": {
+       "type": "string"
+      },
+      "glob": {
+       "type": "string"
+      },
+      "case_insensitive": {
+       "type": "boolean"
+      },
+      "context": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "find_replace",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "pattern": {
+       "type": "string"
+      },
+      "replacement": {
+       "type": "string"
+      },
+      "path": {
+       "type": "string"
+      },
+      "glob": {
+       "type": "string"
+      },
+      "case_insensitive": {
+       "type": "boolean"
+      },
+      "regex": {
+       "type": "boolean"
+      },
+      "dry_run": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "find_files",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "pattern": {
+       "type": "string"
+      },
+      "path": {
+       "type": "string"
+      },
+      "type": {
+       "type": "string"
+      },
+      "max_depth": {
+       "type": "integer"
+      },
+      "extension": {
+       "type": "string"
+      },
+      "respect_gitignore": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "jq_query",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "filter": {
+       "type": "string"
+      },
+      "path": {
+       "type": "string"
+      },
+      "raw": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "project_inspect",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "max_depth": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "git_status",
+    "parameters": {
+     "type": "object",
+     "properties": {}
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "git_diff",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "staged": {
+       "type": "boolean"
+      },
+      "stat": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "diff_files",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path_a": {
+       "type": "string"
+      },
+      "path_b": {
+       "type": "string"
+      },
+      "context": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "git_commit",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "message": {
+       "type": "string"
+      },
+      "paths": {
+       "type": "array"
+      },
+      "all": {
+       "type": "boolean"
+      },
+      "allow_unsafe": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "project_todo",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "action": {
+       "type": "string"
+      },
+      "id": {
+       "type": "string"
+      },
+      "title": {
+       "type": "string"
+      },
+      "status": {
+       "type": "string"
+      },
+      "notes": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "run_shell",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "command": {
+       "type": "string"
+      },
+      "timeout_ms": {
+       "type": "integer"
+      },
+      "allow_unsafe": {
+       "type": "boolean"
+      },
+      "dry_run": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "run_test",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "command": {
+       "type": "string"
+      },
+      "timeout_ms": {
+       "type": "integer"
+      },
+      "allow_unsafe": {
+       "type": "boolean"
+      },
+      "dry_run": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "start_process",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "command": {
+       "type": "string"
+      },
+      "cwd": {
+       "type": "string"
+      },
+      "name": {
+       "type": "string"
+      },
+      "allow_unsafe": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "process_status",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      },
+      "logs": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "stop_process",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "process_input",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      },
+      "input": {
+       "type": "string"
+      },
+      "newline": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "spawn_agent",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "prompt": {
+       "type": "string"
+      },
+      "model": {
+       "type": "string"
+      },
+      "name": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "self_review",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "task": {
+       "type": "string"
+      },
+      "diff_from": {
+       "type": "string"
+      },
+      "paths": {
+       "type": "array"
+      },
+      "focus": {
+       "type": "string"
+      },
+      "model": {
+       "type": "string"
+      },
+      "timeout_ms": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "agent_status",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "stop_agent",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "ask_user",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "question": {
+       "type": "string"
+      },
+      "options": {
+       "type": "array"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "memory_save",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "text": {
+       "type": "string"
+      },
+      "tags": {
+       "type": "array"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "memory_search",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string"
+      },
+      "limit": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "memory_list",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "limit": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "memory_forget",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "memory_deprecate",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      },
+      "reason": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "memory_explain",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "id": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "memory_atoms",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "status": {
+       "type": "string"
+      },
+      "type": {
+       "type": "string"
+      },
+      "limit": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "rag_search",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string"
+      },
+      "k": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "rag_index",
+    "parameters": {
+     "type": "object",
+     "properties": {}
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "find_symbol",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "name": {
+       "type": "string"
+      },
+      "kind": {
+       "type": "string"
+      },
+      "path": {
+       "type": "string"
+      },
+      "references": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "deps",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "action": {
+       "type": "string"
+      },
+      "manager": {
+       "type": "string"
+      },
+      "timeout_ms": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "lsp",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "action": {
+       "type": "string"
+      },
+      "path": {
+       "type": "string"
+      },
+      "line": {
+       "type": "integer"
+      },
+      "character": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "rename_symbol",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "line": {
+       "type": "integer"
+      },
+      "character": {
+       "type": "integer"
+      },
+      "new_name": {
+       "type": "string"
+      },
+      "dry_run": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "test_coverage",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "command": {
+       "type": "string"
+      },
+      "timeout_ms": {
+       "type": "integer"
+      },
+      "dry_run": {
+       "type": "boolean"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "lint_check",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "fix": {
+       "type": "boolean"
+      },
+      "path": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "security_scan",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "scope": {
+       "type": "string"
+      },
+      "path": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "system_info",
+    "parameters": {
+     "type": "object",
+     "properties": {}
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "dev_env_report",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "tools": {
+       "type": "array"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "where_is",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "name": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "create_markdown_report",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "filename": {
+       "type": "string"
+      },
+      "title": {
+       "type": "string"
+      },
+      "content": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "settings_add_model",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "key": {
+       "type": "string"
+      },
+      "provider": {
+       "type": "string"
+      },
+      "model_id": {
+       "type": "string"
+      },
+      "max_tokens": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "settings_set_apikey",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "provider": {
+       "type": "string"
+      },
+      "api_key": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "find_skill",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string"
+      },
+      "limit": {
+       "type": "integer"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "invoke_skill",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "command": {
+       "type": "string"
+      },
+      "args": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "create_tool",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "name": {
+       "type": "string"
+      },
+      "code": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  }
+ ],
+ "parse": [
+  {
+   "input": "Inspecting now.<tool_call>list_dir<path>omni-todos</parameter>\n<parameter=recursive>true</parameter>\n</function>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "list_dir",
+     "args": {
+      "path": "omni-todos",
+      "recursive": true
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=read_file>\n<parameter=path>src/index.js</parameter>\n<parameter=limit>100</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "src/index.js",
+      "limit": 100
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>search\n<arg_key>pattern</arg_key>\n<arg_value>TODO</arg_value>\n<arg_key>case_insensitive</arg_key>\n<arg_value>true</arg_value>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "search",
+     "args": {
+      "pattern": "TODO",
+      "case_insensitive": true
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n{\"name\": \"run_shell\", \"arguments\": {\"command\": \"npm test\", \"timeout_ms\": 60000}}\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "run_shell",
+     "args": {
+      "command": "npm test",
+      "timeout_ms": 60000
+     }
+    }
+   ]
+  },
+  {
+   "input": "<function=git_status>\n</function>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "git_status",
+     "args": {}
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=list_dir>\n{\"path\": \"src\"}\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "list_dir",
+     "args": {
+      "path": "src"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call><function=git_status></function></tool_call>\n<tool_call><function=list_dir><parameter=path>.</parameter></function></tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "git_status",
+     "args": {}
+    },
+    {
+     "name": "list_dir",
+     "args": {
+      "path": "."
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>cfg.json</parameter>\n<parameter=content>{\"a\": 1}</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "cfg.json",
+      "content": "{\"a\": 1}"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call><function=edit_file><parameter=path>a.html</parameter><parameter=old_string><div>x</div></parameter><parameter=new_string><div>y</div></parameter></function></tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "edit_file",
+     "args": {
+      "path": "a.html",
+      "old_string": "<div>x</div>",
+      "new_string": "<div>y</div>"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<think>plan first</think><tool_call><function=list_dir><parameter=path>.</parameter></function></tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "list_dir",
+     "args": {
+      "path": "."
+     }
+    }
+   ]
+  },
+  {
+   "input": "The bug is in line 42.",
+   "registry": true,
+   "calls": []
+  },
+  {
+   "input": "<tool_call><invoke name=\"read_file\"><parameter=path>x.js</parameter></invoke></tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "x.js"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>a.txt</parameter>\n<parameter=content>line1\nline2 </parameter> tricky</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "a.txt",
+      "content": "line1\nline2 </parameter> tricky"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"y.js\", \"content\": \"a </parameter> b\"}}\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "y.js",
+      "content": "a </parameter> b"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"x.js\", \"content\": \"alpha</tool_call> beta\"}}\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "x.js",
+      "content": "alpha</tool_call> beta"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>b.txt</parameter>\n<parameter=content>foo </tool_call> bar</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "b.txt",
+      "content": "foo </tool_call> bar"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>src/core/toolcalls.mjs</parameter>\n<parameter=content>// Does the content look like the model attempted a tool call at all?\nexport function hasToolIntent(content) {\n  return /<tool_call|<function\\s*=|<arg_key>|<parameter\\s*=|<invoke\\b/i.test(String(content || \"\"));\n}\nexport function stripToolCallText(content) {\n  let s = String(content || \"\");\n  s = s.replace(/<tool_call>[\\s\\S]*?<\\/tool_call>/g, \"\");\n  s = s.replace(/<function\\s*=[^>]*>[\\s\\S]*?(?:<\\/function>|$)/g, \"\");\n  return s;\n}</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "src/core/toolcalls.mjs",
+      "content": "// Does the content look like the model attempted a tool call at all?\nexport function hasToolIntent(content) {\n  return /<tool_call|<function\\s*=|<arg_key>|<parameter\\s*=|<invoke\\b/i.test(String(content || \"\"));\n}\nexport function stripToolCallText(content) {\n  let s = String(content || \"\");\n  s = s.replace(/<tool_call>[\\s\\S]*?<\\/tool_call>/g, \"\");\n  s = s.replace(/<function\\s*=[^>]*>[\\s\\S]*?(?:<\\/function>|$)/g, \"\");\n  return s;\n}"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>c.txt</parameter>\n<parameter=content>line1\nliteral \\</parameter>\nline3</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "c.txt",
+      "content": "line1\nliteral </parameter>\nline3"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>d.txt</parameter>\n<parameter=content>alpha \\</tool_call>\nomega</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "d.txt",
+      "content": "alpha </tool_call>\nomega"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\r\n<function=read_file>\r\n<parameter=path>win.txt</parameter>\r\n</function>\r\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "win.txt"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=READ_FILE>\n<parameter=path>case.txt</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "case.txt"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=totally_unknown_tool>\n<parameter=x>1</parameter>\n<parameter=y>[1,2]</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "totally_unknown_tool",
+     "args": {
+      "x": 1,
+      "y": [
+       1,
+       2
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=read_file>\n<parameter=path>a</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=read_file>\n<parameter=path>b</parameter>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "a"
+     }
+    },
+    {
+     "name": "read_file",
+     "args": {
+      "path": "b"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n{\"name\": \"read_file\", \"arguments\": \"{\\\"path\\\": \\\"stringified.txt\\\"}\"}\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "stringified.txt"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=run_shell>\n<parameter=command>grep '\\<word\\>' f.txt</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "run_shell",
+     "args": {
+      "command": "grep '\\<word\\>' f.txt"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>unicode.txt</parameter>\n<parameter=content>héllo — 世界 🎉</parameter>\n</function>\n</tool_call>",
+   "registry": true,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "unicode.txt",
+      "content": "héllo — 世界 🎉"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<think>unclosed reasoning <tool_call><function=list_dir><parameter=path>.</parameter></function></tool_call>",
+   "registry": true,
+   "calls": []
+  },
+  {
+   "input": "Some prose. <function=git_status></function> more prose",
+   "registry": true,
+   "calls": [
+    {
+     "name": "git_status",
+     "args": {}
+    }
+   ]
+  },
+  {
+   "input": "",
+   "registry": true,
+   "calls": []
+  },
+  {
+   "input": "Inspecting now.<tool_call>list_dir<path>omni-todos</parameter>\n<parameter=recursive>true</parameter>\n</function>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "list_dir",
+     "args": {
+      "path": "omni-todos",
+      "recursive": true
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=read_file>\n<parameter=path>src/index.js</parameter>\n<parameter=limit>100</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "src/index.js",
+      "limit": 100
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>search\n<arg_key>pattern</arg_key>\n<arg_value>TODO</arg_value>\n<arg_key>case_insensitive</arg_key>\n<arg_value>true</arg_value>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "search",
+     "args": {
+      "pattern": "TODO",
+      "case_insensitive": true
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n{\"name\": \"run_shell\", \"arguments\": {\"command\": \"npm test\", \"timeout_ms\": 60000}}\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "run_shell",
+     "args": {
+      "command": "npm test",
+      "timeout_ms": 60000
+     }
+    }
+   ]
+  },
+  {
+   "input": "<function=git_status>\n</function>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "git_status",
+     "args": {}
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=list_dir>\n{\"path\": \"src\"}\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "list_dir",
+     "args": {
+      "path": "src"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call><function=git_status></function></tool_call>\n<tool_call><function=list_dir><parameter=path>.</parameter></function></tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "git_status",
+     "args": {}
+    },
+    {
+     "name": "list_dir",
+     "args": {
+      "path": "."
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>cfg.json</parameter>\n<parameter=content>{\"a\": 1}</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "cfg.json",
+      "content": {
+       "a": 1
+      }
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call><function=edit_file><parameter=path>a.html</parameter><parameter=old_string><div>x</div></parameter><parameter=new_string><div>y</div></parameter></function></tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "edit_file",
+     "args": {
+      "path": "a.html",
+      "old_string": "<div>x</div>",
+      "new_string": "<div>y</div>"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<think>plan first</think><tool_call><function=list_dir><parameter=path>.</parameter></function></tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "list_dir",
+     "args": {
+      "path": "."
+     }
+    }
+   ]
+  },
+  {
+   "input": "The bug is in line 42.",
+   "registry": false,
+   "calls": []
+  },
+  {
+   "input": "<tool_call><invoke name=\"read_file\"><parameter=path>x.js</parameter></invoke></tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "x.js"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>a.txt</parameter>\n<parameter=content>line1\nline2 </parameter> tricky</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "a.txt",
+      "content": "line1\nline2 </parameter> tricky"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"y.js\", \"content\": \"a </parameter> b\"}}\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "y.js",
+      "content": "a </parameter> b"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"x.js\", \"content\": \"alpha</tool_call> beta\"}}\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "x.js",
+      "content": "alpha</tool_call> beta"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>b.txt</parameter>\n<parameter=content>foo </tool_call> bar</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "b.txt",
+      "content": "foo </tool_call> bar"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>src/core/toolcalls.mjs</parameter>\n<parameter=content>// Does the content look like the model attempted a tool call at all?\nexport function hasToolIntent(content) {\n  return /<tool_call|<function\\s*=|<arg_key>|<parameter\\s*=|<invoke\\b/i.test(String(content || \"\"));\n}\nexport function stripToolCallText(content) {\n  let s = String(content || \"\");\n  s = s.replace(/<tool_call>[\\s\\S]*?<\\/tool_call>/g, \"\");\n  s = s.replace(/<function\\s*=[^>]*>[\\s\\S]*?(?:<\\/function>|$)/g, \"\");\n  return s;\n}</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "src/core/toolcalls.mjs",
+      "content": "// Does the content look like the model attempted a tool call at all?\nexport function hasToolIntent(content) {\n  return /<tool_call|<function\\s*=|<arg_key>|<parameter\\s*=|<invoke\\b/i.test(String(content || \"\"));\n}\nexport function stripToolCallText(content) {\n  let s = String(content || \"\");\n  s = s.replace(/<tool_call>[\\s\\S]*?<\\/tool_call>/g, \"\");\n  s = s.replace(/<function\\s*=[^>]*>[\\s\\S]*?(?:<\\/function>|$)/g, \"\");\n  return s;\n}"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>c.txt</parameter>\n<parameter=content>line1\nliteral \\</parameter>\nline3</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "c.txt",
+      "content": "line1\nliteral </parameter>\nline3"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>d.txt</parameter>\n<parameter=content>alpha \\</tool_call>\nomega</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "d.txt",
+      "content": "alpha </tool_call>\nomega"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\r\n<function=read_file>\r\n<parameter=path>win.txt</parameter>\r\n</function>\r\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "win.txt"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=READ_FILE>\n<parameter=path>case.txt</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "READ_FILE",
+     "args": {
+      "path": "case.txt"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=totally_unknown_tool>\n<parameter=x>1</parameter>\n<parameter=y>[1,2]</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "totally_unknown_tool",
+     "args": {
+      "x": 1,
+      "y": [
+       1,
+       2
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=read_file>\n<parameter=path>a</parameter>\n</function>\n</tool_call>\n<tool_call>\n<function=read_file>\n<parameter=path>b</parameter>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "a"
+     }
+    },
+    {
+     "name": "read_file",
+     "args": {
+      "path": "b"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n{\"name\": \"read_file\", \"arguments\": \"{\\\"path\\\": \\\"stringified.txt\\\"}\"}\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "read_file",
+     "args": {
+      "path": "stringified.txt"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=run_shell>\n<parameter=command>grep '\\<word\\>' f.txt</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "run_shell",
+     "args": {
+      "command": "grep '\\<word\\>' f.txt"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<tool_call>\n<function=write_file>\n<parameter=path>unicode.txt</parameter>\n<parameter=content>héllo — 世界 🎉</parameter>\n</function>\n</tool_call>",
+   "registry": false,
+   "calls": [
+    {
+     "name": "write_file",
+     "args": {
+      "path": "unicode.txt",
+      "content": "héllo — 世界 🎉"
+     }
+    }
+   ]
+  },
+  {
+   "input": "<think>unclosed reasoning <tool_call><function=list_dir><parameter=path>.</parameter></function></tool_call>",
+   "registry": false,
+   "calls": []
+  },
+  {
+   "input": "Some prose. <function=git_status></function> more prose",
+   "registry": false,
+   "calls": [
+    {
+     "name": "git_status",
+     "args": {}
+    }
+   ]
+  },
+  {
+   "input": "",
+   "registry": false,
+   "calls": []
+  }
+ ],
+ "split": [
+  {
+   "chunks": [
+    "The bug is ",
+    "in line 42."
+   ],
+   "think": "",
+   "answer": "The bug is in line 42."
+  },
+  {
+   "chunks": [
+    "<think>plan first</think>Here is the fix."
+   ],
+   "think": "plan first",
+   "answer": "Here is the fix."
+  },
+  {
+   "chunks": [
+    "prefix ",
+    "<th",
+    "ink>reasoning here</th",
+    "ink> answer text"
+   ],
+   "think": "reasoning here",
+   "answer": "prefix  answer text"
+  },
+  {
+   "chunks": [
+    "<think>step one step two",
+    "</th",
+    "ink>done"
+   ],
+   "think": "step one step two",
+   "answer": "done"
+  },
+  {
+   "chunks": [
+    "<think>a</think>mid<think>b</think>end"
+   ],
+   "think": "ab",
+   "answer": "midend"
+  },
+  {
+   "chunks": [
+    "intro<think>never closes"
+   ],
+   "think": "never closes",
+   "answer": "intro"
+  },
+  {
+   "chunks": [
+    "<",
+    "t",
+    "h",
+    "i",
+    "n",
+    "k",
+    ">",
+    "x",
+    "<",
+    "/",
+    "think>y"
+   ],
+   "think": "x",
+   "answer": "y"
+  }
+ ],
+ "extract_think": [
+  {
+   "input": "<think>because X</think>The answer is Y.",
+   "think": "because X",
+   "rest": "The answer is Y."
+  },
+  {
+   "input": "just an answer",
+   "think": "",
+   "rest": "just an answer"
+  },
+  {
+   "input": "intro<think>cut off mid-thought",
+   "think": "cut off mid-thought",
+   "rest": "intro"
+  },
+  {
+   "input": "<think>a</think>b<think>c",
+   "think": "ac",
+   "rest": "b"
+  }
+ ],
+ "strip_think": [
+  {
+   "input": "<think>because X</think>The answer is Y.",
+   "output": "The answer is Y."
+  },
+  {
+   "input": "just an answer",
+   "output": "just an answer"
+  },
+  {
+   "input": "intro<think>cut off mid-thought",
+   "output": "intro"
+  },
+  {
+   "input": "<think>a</think>b<think>c",
+   "output": "b"
+  }
+ ],
+ "strip_tool_call_text": [
+  {
+   "input": "Before.<tool_call>x</tool_call>After.<tool_call>unclosed...",
+   "output": "Before.After."
+  },
+  {
+   "input": "a<function=x>y</function>b<function=z>unclosed",
+   "output": "ab"
+  },
+  {
+   "input": "plain",
+   "output": "plain"
+  }
+ ],
+ "has_tool_intent": [
+  {
+   "input": "<tool_call>garbage",
+   "output": true
+  },
+  {
+   "input": "normal text",
+   "output": false
+  },
+  {
+   "input": "<FUNCTION = x>",
+   "output": true
+  },
+  {
+   "input": "<invoke name=\"a\">",
+   "output": true
+  },
+  {
+   "input": "<arg_key>k",
+   "output": true
+  }
+ ],
+ "text_tool_instructions": "\n# Tool Calling Protocol\nThis provider has no native tool calling. To use a tool, emit EXACTLY this XML (and close every tag):\n<tool_call>\n<function=tool_name>\n<parameter=argument_name>value</parameter>\n</function>\n</tool_call>\n\nWorked example — list a directory recursively:\n<tool_call>\n<function=list_dir>\n<parameter=path>src</parameter>\n<parameter=recursive>true</parameter>\n</function>\n</tool_call>\n\nRules:\n- One <parameter=NAME>VALUE</parameter> line per argument; NAME is the argument name from the schema.\n- Plain string values are written as-is (no quotes). Booleans, numbers, arrays, and objects are written as JSON.\n- Values may contain other tags (HTML, XML) as-is. But if a value must contain a literal PROTOCOL closing tag (</parameter>, </function>, </tool_call>), escape it as \\</parameter> — the parser restores it.\n- Emit the tool call at the END of your message and output NOTHING after </tool_call>.\n- To call several tools at once, emit several complete <tool_call> blocks.\n- Never invent tool names. Never describe or explain the tool call.\n- After each tool result is returned, either call the next tool or give your final answer.\n- Do not stop working right after a tool call — the result always comes back to you.\n\nAvailable tools (JSON schemas):\n[{\"name\":\"read_file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"offset\":{\"type\":\"integer\"},\"limit\":{\"type\":\"integer\"}}}},{\"name\":\"read_many_files\",\"parameters\":{\"type\":\"object\",\"properties\":{\"paths\":{\"type\":\"array\"},\"limit_per_file\":{\"type\":\"integer\"}}}},{\"name\":\"write_file\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}}}}]",
+ "recovery_message": "SYSTEM: Your tool call was malformed and could NOT be executed.\nRe-emit it now using EXACTLY this format, closing every tag:\n<tool_call>\n<function=tool_name>\n<parameter=argument_name>value</parameter>\n</function>\n</tool_call>\nIf a value must contain a literal closing tag like </parameter>, escape it as \\</parameter>.\nOutput only the corrected <tool_call> block(s) — no other text."
+}

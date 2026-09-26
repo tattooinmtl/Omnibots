@@ -1,0 +1,351 @@
+{
+  "omni_version": "3.5.6",
+  "defaultProvider": "xkiro",
+  "defaultModel": "xkiro/mistral-medium-3.5",
+  "providers": {
+    "openai": {
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "",
+      "label": "OpenAI",
+      "reasoningParam": "reasoning_effort"
+    },
+    "nvidia": {
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "apiKey": "",
+      "accounts": {
+        "nvidia1": "",
+        "nvidia2": "",
+        "nvidia3": "",
+        "nvidia4": ""
+      },
+      "activeAccount": "nvidia1",
+      "label": "NVIDIA NIM",
+      "api": "openai-completions",
+      "nativeTools": false
+    },
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKey": "",
+      "label": "OpenRouter",
+      "reasoningParam": "none"
+    },
+    "groq": {
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "apiKey": "",
+      "label": "Groq",
+      "reasoningParam": "none"
+    },
+    "deepseek": {
+      "baseUrl": "https://api.deepseek.com/v1",
+      "apiKey": "",
+      "label": "DeepSeek"
+    },
+    "google": {
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "apiKey": "",
+      "label": "Google Gemini"
+    },
+    "xai": {
+      "baseUrl": "https://api.x.ai/v1",
+      "apiKey": "",
+      "label": "xAI"
+    },
+    "mistral": {
+      "baseUrl": "https://api.mistral.ai/v1",
+      "apiKey": "",
+      "label": "Mistral",
+      "reasoningParam": "none"
+    },
+    "agnes": {
+      "baseUrl": "https://apihub.agnes-ai.com/v1",
+      "apiKey": "",
+      "accounts": {
+        "agnes1": "",
+        "agnes2": ""
+      },
+      "activeAccount": "agnes1",
+      "label": "Agnes AI"
+    },
+    "xkiro": {
+      "baseUrl": "https://api.xkiro.com/v1",
+      "apiKey": "",
+      "label": "xKiro",
+      "reasoningParam": "none"
+    },
+    "atria": {
+      "baseUrl": "https://api.atria-asi.ai/v1",
+      "apiKey": "",
+      "label": "Atria ASI",
+      "reasoningParam": "none"
+    },
+    "minimax.io": {
+      "baseUrl": "https://api.minimax.io/v1",
+      "apiKey": "",
+      "label": "MiniMax (api.minimax.io)",
+      "reasoningParam": "none",
+      "maxToolIterations": 200
+    },
+    "kimi": {
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "apiKey": "",
+      "label": "Kimi (Moonshot)",
+      "reasoningParam": "none"
+    },
+    "claude": {
+      "baseUrl": "https://api.anthropic.com/v1",
+      "apiKey": "",
+      "label": "Claude (Anthropic — needs proxy)",
+      "reasoningParam": "none"
+    },
+    "cursor": {
+      "baseUrl": "https://api.cursor.sh/v1",
+      "apiKey": "",
+      "label": "Cursor (community endpoint)",
+      "reasoningParam": "none"
+    },
+    "grok": {
+      "baseUrl": "https://api.x.ai/v1",
+      "apiKey": "",
+      "label": "Grok (xAI)",
+      "reasoningParam": "none"
+    },
+    "together": {
+      "baseUrl": "https://api.together.xyz/v1",
+      "apiKey": "",
+      "label": "Together AI",
+      "reasoningParam": "none"
+    },
+    "fireworks": {
+      "baseUrl": "https://api.fireworks.ai/inference/v1",
+      "apiKey": "",
+      "label": "Fireworks",
+      "reasoningParam": "none"
+    },
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "apiKey": "not-needed",
+      "label": "Ollama",
+      "reasoningParam": "none"
+    },
+    "local": {
+      "baseUrl": "http://localhost:8080/v1",
+      "apiKey": "not-needed",
+      "label": "Local llama.cpp",
+      "reasoningParam": "none"
+    }
+  },
+  "models": {
+    "openai/gpt-4.1": {
+      "provider": "openai",
+      "id": "gpt-4.1",
+      "maxTokens": 16384,
+      "contextWindow": 1047576,
+      "vision": true
+    },
+    "openai/gpt-4.1-mini": {
+      "provider": "openai",
+      "id": "gpt-4.1-mini",
+      "maxTokens": 16384,
+      "contextWindow": 1047576,
+      "vision": true
+    },
+    "openai/o4-mini": {
+      "provider": "openai",
+      "id": "o4-mini",
+      "maxTokens": 16384,
+      "reasoning": true,
+      "contextWindow": 200000,
+      "vision": true
+    },
+    "openrouter/llama-3-8b": {
+      "provider": "openrouter",
+      "id": "meta-llama/llama-3-8b-instruct",
+      "maxTokens": 2048,
+      "contextWindow": 8192
+    },
+    "agnes/agnes-2.5-flash": {
+      "provider": "agnes",
+      "id": "agnes-2.5-flash",
+      "maxTokens": 16384,
+      "contextWindow": 131072,
+      "free": true
+    },
+    "agnes/agnes-2.5-pro-alpha": {
+      "provider": "agnes",
+      "id": "agnes-2.5-pro-alpha",
+      "maxTokens": 16384,
+      "contextWindow": 131072
+    },
+    "agnes/agnes-2.0-flash": {
+      "provider": "agnes",
+      "id": "agnes-2.0-flash",
+      "maxTokens": 16384,
+      "contextWindow": 32768,
+      "free": true
+    },
+    "minimax.io/m3": {
+      "provider": "minimax.io",
+      "id": "MiniMax-M3",
+      "maxTokens": 128000,
+      "contextWindow": 1000000,
+      "maxToolIterations": 200
+    },
+    "kimi/moonshot-v1-8k": {
+      "provider": "kimi",
+      "id": "moonshot-v1-8k",
+      "maxTokens": 2048,
+      "contextWindow": 8192
+    },
+    "kimi/moonshot-v1-32k": {
+      "provider": "kimi",
+      "id": "moonshot-v1-32k",
+      "maxTokens": 8192,
+      "contextWindow": 32768
+    },
+    "kimi/moonshot-v1-128k": {
+      "provider": "kimi",
+      "id": "moonshot-v1-128k",
+      "maxTokens": 32768,
+      "contextWindow": 131072
+    },
+    "nvidia/nemotron-3-ultra-550b-a55b": {
+      "provider": "nvidia",
+      "id": "nvidia/nemotron-3-ultra-550b-a55b",
+      "maxTokens": 16384,
+      "contextWindow": 131072
+    },
+    "nvidia/nvidia-nemotron-3-ultra-550b-a55b": {
+      "provider": "nvidia",
+      "id": "nvidia/nemotron-3-ultra-550b-a55b",
+      "maxTokens": 16384,
+      "contextWindow": 131072
+    },
+    "nvidia/glm-5.2": {
+      "provider": "nvidia",
+      "id": "z-ai/glm-5.2",
+      "maxTokens": 16384,
+      "contextWindow": 202752
+    },
+    "nvidia/llama-3.3-70b": {
+      "provider": "nvidia",
+      "id": "meta/llama-3.3-70b-instruct",
+      "maxTokens": 4096,
+      "contextWindow": 131072
+    },
+    "nvidia/qwen3.5-397b": {
+      "provider": "nvidia",
+      "id": "qwen/qwen3.5-397b-a17b",
+      "maxTokens": 16384,
+      "contextWindow": 262144
+    },
+    "nvidia/deepseek-v4-pro": {
+      "provider": "nvidia",
+      "id": "deepseek-ai/deepseek-v4-pro",
+      "maxTokens": 16384,
+      "contextWindow": 163840
+    },
+    "local/coder": {
+      "provider": "local",
+      "id": "Qwopus3.5-9B-Coder.i1-Q6_K",
+      "maxTokens": 8192
+    },
+    "xkiro/mistral-large": {
+      "provider": "xkiro",
+      "id": "mistralai/mistral-large-2512",
+      "maxTokens": 16384,
+      "contextWindow": 256000,
+      "free": true,
+      "vision": true
+    },
+    "xkiro/mistral-medium-3.5": {
+      "provider": "xkiro",
+      "id": "mistralai/mistral-medium-3.5",
+      "maxTokens": 65536,
+      "contextWindow": 256000,
+      "free": true,
+      "vision": true,
+      "reasoning": true
+    },
+    "xkiro/mistral-small": {
+      "provider": "xkiro",
+      "id": "mistralai/mistral-small-2603",
+      "maxTokens": 65536,
+      "contextWindow": 256000,
+      "free": true,
+      "vision": true,
+      "reasoning": true
+    },
+    "xkiro/codestral": {
+      "provider": "xkiro",
+      "id": "mistralai/codestral-2508",
+      "maxTokens": 16384,
+      "contextWindow": 256000,
+      "free": true
+    },
+    "xkiro/devstral-medium": {
+      "provider": "xkiro",
+      "id": "mistralai/devstral-medium",
+      "maxTokens": 16384,
+      "contextWindow": 256000,
+      "free": true
+    },
+    "xkiro/ministral-14b": {
+      "provider": "xkiro",
+      "id": "mistralai/ministral-14b",
+      "maxTokens": 8192,
+      "contextWindow": 256000,
+      "free": true,
+      "vision": true
+    },
+    "xkiro/ministral-8b": {
+      "provider": "xkiro",
+      "id": "mistralai/ministral-8b",
+      "maxTokens": 8192,
+      "contextWindow": 256000,
+      "free": true,
+      "vision": true
+    },
+    "xkiro/ministral-3b": {
+      "provider": "xkiro",
+      "id": "mistralai/ministral-3b",
+      "maxTokens": 8192,
+      "contextWindow": 128000,
+      "free": true,
+      "vision": true
+    },
+    "xkiro/gpt-5.3-codex-spark": {
+      "provider": "xkiro",
+      "id": "openai/gpt-5.3-codex-spark",
+      "maxTokens": 16384,
+      "contextWindow": 131072,
+      "free": true
+    },
+    "xkiro/sensenova-6.8-flash-lite": {
+      "provider": "xkiro",
+      "id": "sensenova/sensenova-6.8-flash-lite",
+      "maxTokens": 16384,
+      "contextWindow": 262144,
+      "free": true
+    },
+    "xkiro/sensenova-6.7-flash-lite": {
+      "provider": "xkiro",
+      "id": "sensenova/sensenova-6.7-flash-lite",
+      "maxTokens": 16384,
+      "contextWindow": 262144,
+      "free": true
+    },
+    "xkiro/qwen3.8-max-free": {
+      "provider": "xkiro",
+      "id": "qwen/qwen3.8-max:free",
+      "maxTokens": 65536,
+      "contextWindow": 1000000,
+      "free": true,
+      "vision": true
+    },
+    "atria/dawn-preview": {
+      "provider": "atria",
+      "id": "Atria-Dawn-Preview",
+      "maxTokens": 8192
+    }
+  }
+}

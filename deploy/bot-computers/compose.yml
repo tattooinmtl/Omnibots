@@ -1,0 +1,50 @@
+# Bot Computers (PLAN.md A10.f). On the VPS: cd /opt/bot-computers && docker compose up -d --build
+# The desktop image is built separately: docker build -t omnibots-desktop:1 desktop/
+name: bot-computers
+
+networks:
+  botnet:                        # bot computers live here; no route out except the proxy
+    internal: true
+    ipam:
+      config: [{ subnet: 172.31.99.0/24 }]
+  egress: {}                     # the proxy's way out
+
+volumes:
+  gateway-data: {}
+  proxylog: {}
+
+services:
+  egress-proxy:
+    image: ubuntu/squid:6.6-24.04_edge
+    container_name: egress-proxy
+    restart: unless-stopped
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+      - proxylog:/var/log/squid
+    networks:
+      botnet: { ipv4_address: 172.31.99.2 }
+      egress: {}
+    mem_limit: 256m
+
+  bot-computers:
+    build: ./gateway
+    container_name: bot-computers
+    restart: unless-stopped
+    ports: ["127.0.0.1:8898:8080"]               # nginx (TLS) is the only way in
+    environment:
+      PUBLIC_URL: https://computers.globalwarningnetworks.com
+      DESKTOP_IMAGE: omnibots-desktop:1
+      BOT_NETWORK: bot-computers_botnet
+      BOT_RUNTIME: runsc                         # gVisor
+      BOT_PROXY: http://172.31.99.2:3128
+      MAX_RUNNING: "2"
+      IDLE_MIN: "15"
+      EGRESS_LOG: /proxylog/access.log
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gateway-data:/data
+      - proxylog:/proxylog:ro
+    networks:
+      botnet: { ipv4_address: 172.31.99.3 }
+      default: {}
+    mem_limit: 256m
