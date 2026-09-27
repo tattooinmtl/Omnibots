@@ -61,6 +61,9 @@ ask_from = "R4"
 # PLAN.md A9.c.02. Token caps: 0 = no cap (providers' own quotas still apply).
 daily_tokens = 0
 bot_daily_tokens = 0
+# PLAN.md A9.c.03. Each project's tokens per day. Not a wall: when it's used up, the bot
+# asks you for more with its estimate of what finishing needs. 0 = no cap.
+project_daily_tokens = 200000
 # Money caps (USD) for R4 actions; every R4 action ALSO needs your click.
 money_per_task_usd = 2.0
 money_per_bot_day_usd = 5.0

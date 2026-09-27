@@ -616,6 +616,7 @@ At a glance, the user can see who's stuck.
 - **A8.d.03** ⏳ **`risk_ceiling` is enforced.** Today it's stored (the factory always writes R2) and nothing reads it. `tools.run` refuses a call whose tool risk is above the bot's ceiling (an error the model sees, logged). The factory sets the ceiling to the highest risk among the tools it gave the bot, never above R3 without the user. The user raises or lowers it in the bot editor. In a relay, the holder's ceiling applies.
 - ~~**A8.d.04** Every bot gets every tool; the profile list is only a preference (Grok F2).~~ ⛔ Dropped (user, 2026-09-27: keep the tool rule). Replaced by A8.d.01 + A8.d.02.
 - ~~**A8.d.05** Forged tools may use the network and R3 after the reviewer passes them (Grok F2).~~ ⛔ Dropped (2026-09-27, with Claude's recommendation the user followed): forged tools are model-written code; R0–R2 and no network in the sandbox test stays (A10.b.01).
+- **A8.d.06** ⏳ **A bot may read its own dev server** (Grok F9). `web_fetch` and the browser accept `localhost`/`127.0.0.1` on a port that bot's own process started, without the `allow_internal` argument it has to remember. Every other private address stays refused. The gateway's 30-a-minute limit shows in the tool error, so the bot switches to `web_fetch` on a known URL instead of retrying.
 - **A8.d.99** ⏳ **Acceptance (live, real providers):**
   - A brand-new worker with no tool list searches the web; Omi searches too.
   - A worker without the browser tools asks for `browser_navigate` on a URL; Omi relays it to a bot that holds them; the page text comes back to the first worker as `TOOL_RESULT`, and the board shows `TOOL_REQUEST` → relay → `TOOL_RESULT`.
@@ -666,6 +667,7 @@ At a glance, the user can see who's stuck.
 - **A9.b.03** ✅ Replay-exact execution after approval (§3.2 step 4) The approval is bound to a SHA-256 of the exact (frozen) arguments; the call runs with that copy, and a call whose arguments changed after approval is refused ("changed after it was approved").
 - **A9.c.01** ✅ Vault: `keyring` with `secret:<name>` handles, value injection only inside the tool layer, and redaction in every log, event and board message `security/vault.py`: values in Windows Credential Manager (service `omnibots-vault`, which the AppContainer can't read), names/kind/note/**hosts** in `secrets_index` (migration 002). Bots use `{{secret:name}}` only in arguments a tool declares (`Tool.secret_args`; `web_fetch` headers for now); using one is R3; a secret scoped to hosts is refused for any other host; every value is scrubbed to `[secret:name]` in tool results (the model never sees it), bot events, board messages and logs. CLI: `python -m omnibots.security.vault set|list|delete` (value typed hidden).
 - **A9.c.02** ✅ Budgets and spend caps (tokens, money) per task, bot and day, plus the global **panic stop** `security/budget.py` + settings `[budgets]`: daily token caps (team, per bot; 0 = none) checked before every model call (status `budget`); money caps per task / bot-day / day (defaults $2 / $5 / $10) checked BEFORE the approval card (over cap or unknown cost → refused without asking); approved R4 spend recorded in `spend_events` (migration 002). MiniMax video priced from its pay-as-you-go page (checked 2026-09-26: $0.05/s 480P, $0.08/s 768P, $0.13/s 2K). Panic stop now denies pending approvals and empties the seat line FIRST, then cancels everything. Pipe command `budget`.
+- **A9.c.03** ✅ **Project token budget that asks instead of stopping** (user, 2026-09-27: "add a option to add more than the 200k so if we hit limits the bots can ask [and] show approx how much more he'd need to finish the job"). `[budgets] project_daily_tokens = 200000` (0 = no cap). Counted from `provider_usage_events` joined to `jobs.project_id` (no schema change). At the cap the bot makes one short tool-less call for its own estimate (JSON `tokens` + `why`; no usable answer → what the job used so far, at least 50k; clamped 10k–2M, rounded up to 10k) and parks on an approval card (`more_tokens`, "More tokens to finish?", amber) with used / cap / asking for. The wait doesn't use the work clock (A7.a.13). Approve → the grant covers any overshoot plus the estimate, for **today only** (`projects.budget_json.extra_tokens[<date>]`), and the bot goes on from the same step. Deny → the job stops with status `budget` and says why. Asks again if the estimate was short. Applies to every run tied to a project (goals, chats, maintenance), not only background work. Files: `security/budget.py`, `runtime/agent.py` (`_ask_for_more_tokens`, `_estimate_tokens_left`), `runtime/approvals.py` (`MORE_TOKENS`), `ui/widgets.py` (the card), `settings.py`. Tests: `tests/test_project_budget.py` (4).
 - **A9.99** ✅ **Acceptance:**
   - A sandboxed infinite loop is killed at the time limit.
   - A script can't read the vault.
@@ -966,6 +968,63 @@ _(empty)_
 **Notes:**
 _(empty)_
 
+### A15 — Life on a leash: bots that keep working, and you can see and stop it (re-plan 2026-09-27)
+
+> Re-plan of `grok_audit.md` §7 (F1–F10) by Claude with the user, 2026-09-27 ("revise the change proposed and re plan
+> this to make a better flow, we're polishing the app"). Principle: **the bots may work on their own, on a leash you can
+> see and pull.** Leash and honesty come before more autonomy: autonomy on top of fake "done" makes things worse.
+> Built before A14 (its scenarios run on this); A14.99 stays the Phase A gate. Tools are A8.d (Stage 3 below).
+> Order: a (polish) → b (leash) → c (honest done) → A8.d (hands) → d (keeps going) → e (a mind) → f (watching) → g (feel).
+> **Open (user):** the default autonomy dial (A15.b.02) and whether polish (A15.a) or the leash (A15.b) goes first.
+
+#### A15.a — Polish what exists
+- **A15.a.01** ⏳ **The control pipe doesn't freeze the window.** Today the pipe handlers wait on the Qt thread with `engine.submit(...).result(timeout=5…60)` (`app.py` 102–141): `--send goal` freezes the UI up to 30 s. The handler answers when the engine's future is done (a callback), never blocks.
+- **A15.a.02** ⏳ **Dead code and a stale note.** Unused: `MainWindow` (`ui/main_window.py`; keep `_force_foreground`, used by `bot_window.py`), `ddg_lite` (`runtime/web_tools.py`, and its docstring calls it the primary path), `workspace_snapshot` (`runtime/review.py`), `write_snapshot` (`omni/personality.py`), `list_models` (`providers/client.py`). `ipc.py` says `goal` is "not implemented yet (until A7)".
+- **A15.a.03** ⏳ **`multi_provider` does something or disappears.** It's stored per bot and nothing reads it (`grok_audit.md` §2). The user picks: wire it into the router (a bot may use another provider per call) or remove the switch.
+- **A15.a.04** ⏳ **Re-run the live tests** (`OMNIBOTS_LIVE=1`, 14 tests in 7 files) on the current code; last passed 2026-09-25, before 0.2.0.
+
+#### A15.b — The leash
+- **A15.b.01** ⏳ **Who started it.** Every run carries an origin: `user` (a goal or chat you started), `watch` (file change), `routine`, `night`, `relay`, `continue` (A15.d). Stored on the job (migration) and shown on the board and the bot card. Background = every origin except `user`.
+- **A15.b.02** ⏳ **Autonomy dial per project: Off / Watch / Fix.** Off = the bots listen and answer, start nothing. Watch = checks and reports, starts no fix. Fix = may open jobs to repair. **Default for new projects: the user decides** (Claude suggests Watch). The tray gets **"Pause background work"** (all projects; Panic stays separate). Every background start checks the dial first.
+- **A15.b.03** ⏳ **Calmer file watch.** Today (A7.a.15) any change in an open project starts an Omi turn after 90 s, the user's own edits included. It waits until the folder is quiet for a few minutes (setting), one burst = one check, whoever made it, and follows the dial.
+- Budget: **A9.c.03** ✅ (the project cap that asks). The team/bot caps (A9.c.02) stay as they are.
+
+#### A15.c — Honest "done" (Grok F6)
+- **A15.c.01** ⏳ **`url_quote` evidence is fetched**: the page is opened and must contain the quote (today only the typed quote is checked, `board/ledger.py`).
+- **A15.c.02** ⏳ **`accept_claim` re-runs a named test** and rejects with the real output when it fails; a named command must appear in what the bot ran (already checked) and a named file must exist.
+- **A15.c.03** ⏳ **A project keeps its live URL.** A deploy claim stores it; the project isn't `done` until that check passed once; `done` doesn't mean "stop watching" (A15.f).
+
+#### A15.d — Work keeps going (Grok F1 + F8)
+- **A15.d.01** ⏳ **The end of a goal isn't a Stop.** `run_goal` no longer cancels unfinished jobs just because Omi submitted (A7.a.11 stays for the CLI harness); they stay `assigned` and the listen loop (A7.a.15) carries them. User Stop and Panic get their own status, which nothing restarts.
+- **A15.d.02** ⏳ **A restart resumes** `assigned` work of projects that aren't cancelled or stopped by the user (`engine._recover_orphans`).
+- **A15.d.03** ⏳ **Out of time = next round, not "press Start".** When `goal_minutes` runs out, unfinished jobs are re-queued (origin `continue`) with a hand-off note on the board. The 40-step worker cap becomes "summarize and continue next round". The stuck-loop guard stays. Every round is under A9.c.03 and the dial.
+- ~~Grok's "one idle thought per quiet cycle"~~ ⛔ Dropped (2026-09-27): reacting to events (A7.a.15) is cheaper than thinking on a timer.
+
+#### A15.e — A mind (Grok F5 + F3)
+- **A15.e.01** ⏳ **`remember(note)`** writes to the bot's Long-Term Notes, with where it came from (job, source URL or file). A note that came from web or file text keeps the untrusted tag (§3.3), so a page can't plant lasting instructions. The notes show in the bot editor; the user can edit or delete them.
+- **A15.e.02** ⏳ **The retrospective always writes lessons**, also after a goal that went well (what to repeat).
+- **A15.e.03** ⏳ **Omi may do small jobs itself.** The "never do the workers' jobs" line goes; `assign_job` accepts `omi`; Omi delegates when a specialist is the right owner.
+
+#### A15.f — Watching the result (Grok F7 + F10)
+- **A15.f.01** ⏳ **Health check on the live URL** (A15.c.03) on a schedule while the project is open. On failure: Watch → a report on the board and a tray note; Fix → a repair job (origin `routine`).
+- **A15.f.02** ⏳ **Close project** (tray, the project list, and a boss tool) sets `cancelled`, stops its routines and triggers. It's the only thing that ends the watching.
+- **A15.f.03** ⏳ **Boss tools `add_routine`, `add_trigger`, `enqueue_night`**, and the night queue moves to SQL (today it's in memory and only tests fill it).
+- **A15.f.04** ⏳ **A bot's VPS computer stays up** while its project is open, on Fix, and within budget; otherwise the 15-minute idle stop applies.
+
+#### A15.g — How it feels (Claude's additions)
+- **A15.g.01** ⏳ **"While you were away" card** when the app opens: what the bots did on their own since you last looked (checks, fixes, tokens per project, anything waiting for you).
+- **A15.g.02** ⏳ **A "why" on every background action** on the board: what started it (the origin from A15.b.01 plus the file, routine or request).
+- **A15.g.03** ⏳ **"On their own today" strip** in Omi's window: what's running in the background, its tokens, a pause button per project.
+
+#### On hold and dropped
+- **Grok F4, workers talk to each other**: on hold. The tool relay (A8.d.02) covers the main need; revisit when relay use shows more is needed. Needs an ADR-10 decision.
+- ~~Grok F4: the planner, reviewer and council seats as permanent bots with memory~~ ⛔ Dropped (2026-09-27): costly, and shared memory works against the council's independence (ADR-13).
+
+- **A15.99** ⏳ **Acceptance (live, real providers):** a project on Fix with a live URL: the URL breaks overnight and a repair job fixes it without anyone typing a goal; the "while you were away" card reports it. On Watch the same break is only reported. Quit mid-job and reopen: the job continues. Stop: it stays stopped. Close project: the checks stop. A claim that cites a failing test is rejected with the output. A project over its tokens asks for more with an estimate.
+
+**Notes:**
+- 2026-09-27 Claude: A15 added (the re-plan of `grok_audit.md` §7 with the user). Built so far: A9.c.03 (the budget that asks). Cross-phase: A7.a.11 and A7.a.15 change under A15.d/b.03; A8.d.06 added; §7 decisions 7–8.
+
 ### A14 — End-to-end acceptance (the team works)
 
 > Budgets are sized from the A2.b.05 probe. **Lineup (ADR-11):** 4 MiniMax seats (the boss holds seat 1; seats 2–4 are lent to Planner, Web agent, Coder and Reviewer as needed) + **the 5th bot (Document & utility) in the cheap lane** `nvidia` → `agnes` → `openrouter` → `xkiro`. MiniMax usage is drawn from the 1.5B-token reservoir.
@@ -1029,6 +1088,10 @@ All were decided by the user on 2026-09-25. Changing any of them needs the user'
 5. **Atria removed** (2026-09-25): the cheap lane is `nvidia` → `agnes` → `openrouter` → `xkiro`. Atria-Dawn-Preview worked but took 66–112 s to the first token.
 6. **Jev (TypeSafe AI) not added** (2026-09-25). It was considered as an "agent's personal computer". Its own docs say it can't do math or read sensors (it's a fast decision model), it launched on 2026-09-15 with unverified claims, access is waitlisted, and at this team's scale the cheap lane already covers decisions (groq answers tool calls in 0.2 s). It can be revisited later as an optional plug-in, benchmarked in A14.
 
+7. **Tools** (2026-09-27): **keep "never all tools for all bots"** (A8.b.03). Search by default; a bot that lacks a tool asks for its use on the board and another bot runs it (the tool relay, A8.d.02). Grok's "every tool for every bot" and "forged tools with network access" are dropped.
+8. **Project budget** (2026-09-27): 200k tokens per project per day, not a wall: at the limit the bot asks with its estimate, and the user adds more (A9.c.03). 0 turns it off.
+- **Open**: the default autonomy dial for new projects (A15.b.02), and whether polish (A15.a) or the leash (A15.b) goes first.
+
 ---
 
 ## 8. v1 → v2 mapping
@@ -1058,6 +1121,8 @@ All were decided by the user on 2026-09-25. Changing any of them needs the user'
 | (new 2026-09-25) | ADR-10–13, §4 Guild, A0.c.03, A2.b.06–07, A3.a.08–09, A4.a.05, A5.a.05, A6.a.04, A6.b, A7.a.08–10, A7.b, A8.c, A10.b.03, A10.d, A10.e, A11.f–i, A14.a.07 | the CORAL hub, seats, Ledger, Council, playbooks, Grok Bot parity (routines, chat, connectors, teach-by-showing, remote approvals) |
 
 ## 9. Notes Log
+
+- 2026-09-27 Claude: **Re-plan of `grok_audit.md` §7 → new phase A15** ("life on a leash"), placed before A14. Order: polish → leash → honest done → tools (A8.d) → work keeps going → a mind → watching → feel. **A9.c.03 built** (project budget that asks for more with an estimate). Cross-phase: A7.a.11 (goal end cancels workers) and A7.a.15 (file watch) change under A15.d.01 and A15.b.03; A8.d.06 added (Grok F9); §7 decisions 7–8 recorded; two decisions still open (§7).
 
 - 2026-09-27 Claude: **A8.d tool access** added (user decision on `grok_audit.md` F2). Keep "never all tools for all bots"; `web_search`/`web_fetch` by default and for Omi; a **tool relay** on the board (`request_tool` → `TOOL_REQUEST` → Omi's `relay_tool` → a holder runs it under its own ceiling and approvals → `TOOL_RESULT` back to the asker); `risk_ceiling` enforced. Cross-phase: **ADR-10** gets one exception (`TOOL_RESULT` goes straight to the asker), **§4.3** gains `TOOL_REQUEST`/`TOOL_RESULT`, A8.b.03 is unchanged. Grok's "all tools" and "networked forged tools" are ⛔ dropped. Not started.
 

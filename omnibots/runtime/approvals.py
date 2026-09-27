@@ -19,6 +19,9 @@ from typing import Any, Awaitable, Callable
 
 from omnibots.runtime.tools import RISK_ORDER
 
+# A9.c.03: the approval a bot asks for when its project's tokens for today are used up.
+MORE_TOKENS = "more_tokens"
+
 
 @dataclass
 class Scope:

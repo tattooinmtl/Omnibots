@@ -9,17 +9,24 @@ even asked, the estimate is checked against the caps per task, per bot per day
 and per day; over a cap, the action is refused without an approval card. After
 an approved R4 action runs, its cost goes into `spend_events`.
 
+Per project (A9.c.03): each project may use `project_daily_tokens` a day. It's
+not a wall: when it's used up, the bot asks the user for more, with its own
+estimate of what finishing needs; each OK adds that much for today only.
+
 0 means "no cap" for token limits. Money caps are always on (R4 = real money).
 """
 
 from __future__ import annotations
 
+import datetime
+import json
 from dataclasses import dataclass
 from typing import Any
 
 DEFAULTS = {
     "daily_tokens": 0,               # whole team, per day (0 = no cap)
     "bot_daily_tokens": 0,           # each bot, per day (0 = no cap)
+    "project_daily_tokens": 200_000, # each project, per day; the bot asks for more (0 = no cap)
     "money_per_task_usd": 2.0,
     "money_per_bot_day_usd": 5.0,
     "money_per_day_usd": 10.0,
@@ -52,6 +59,50 @@ class Budget:
         if per_bot and (used := await self.tokens_today(bot_id)) >= per_bot:
             return f"this bot's daily token cap is used up ({used:,}/{per_bot:,})"
         return None
+
+    # ── per project (A9.c.03) ─────────────────────────────────────────────
+    async def project_of(self, job_id: str | None) -> str | None:
+        if not job_id:
+            return None
+        row = await self.db.read_one("SELECT project_id FROM jobs WHERE id=?", (job_id,))
+        return row["project_id"] if row else None
+
+    async def project_tokens_today(self, project_id: str) -> int:
+        row = await self.db.read_one(
+            "SELECT COALESCE(SUM(COALESCE(u.tokens_in,0)+COALESCE(u.tokens_out,0)),0) AS t FROM provider_usage_events u "
+            f"JOIN jobs j ON j.id = u.job_id WHERE j.project_id=? AND u.{TODAY}", (project_id,))
+        return int(row["t"] or 0)
+
+    async def _project_budget(self, project_id: str) -> dict[str, Any]:
+        row = await self.db.read_one("SELECT budget_json FROM projects WHERE id=?", (project_id,))
+        try:
+            return json.loads(row["budget_json"] or "{}") if row else {}
+        except ValueError:
+            return {}
+
+    async def project_cap_today(self, project_id: str) -> int:
+        """The day's cap plus what the user added today. 0 = no cap."""
+        base = int(self.limits["project_daily_tokens"])
+        if not base:
+            return 0
+        extra = (await self._project_budget(project_id)).get("extra_tokens", {})
+        return base + int(extra.get(datetime.date.today().isoformat(), 0) if isinstance(extra, dict) else 0)
+
+    async def check_project(self, job_id: str | None) -> dict[str, Any] | None:
+        """None while the job's project is under today's cap; else {project_id, used, cap}."""
+        pid = await self.project_of(job_id)
+        if not pid or not (cap := await self.project_cap_today(pid)):
+            return None
+        used = await self.project_tokens_today(pid)
+        return {"project_id": pid, "used": used, "cap": cap} if used >= cap else None
+
+    async def add_project_tokens(self, project_id: str, tokens: int) -> int:
+        """The user said yes: `tokens` more for this project, today only. Returns the new cap."""
+        b = await self._project_budget(project_id)
+        today = datetime.date.today().isoformat()
+        b["extra_tokens"] = {today: int((b.get("extra_tokens") or {}).get(today, 0)) + max(0, int(tokens))}   # older days dropped
+        await self.db.write("UPDATE projects SET budget_json=? WHERE id=?", (json.dumps(b), project_id))
+        return await self.project_cap_today(project_id)
 
     # ── money ──────────────────────────────────────────────────────────────
     async def spent(self, *, job_id: str | None = None, bot_id: str | None = None, today: bool = True) -> float:

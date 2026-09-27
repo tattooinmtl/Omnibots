@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QToolButton, QTreeView, QVBoxLayout, QWidget,
 )
 
+from omnibots.runtime.approvals import MORE_TOKENS
 from omnibots.ui import theme
 from omnibots.ui.animator import FaceAnimator
 from omnibots.ui.omi_face import render_face
@@ -637,14 +638,16 @@ class ApprovalCard(QFrame):
         self.info, self.on_decide, self.decided = info, on_decide, None
         self.setObjectName("approval")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        tokens = info.get("tool") == MORE_TOKENS
         money = info.get("risk") == "R4"
-        edge = theme.AMBER if money else theme.RED
+        edge = theme.AMBER if (money or tokens) else theme.RED
         self.setStyleSheet(f"QFrame#approval {{ background: {theme.BG2}; border: 1px solid {edge}; border-radius: 14px; }}")
         v = QVBoxLayout(self)
         v.setContentsMargins(16, 12, 16, 12)
         v.setSpacing(8)
         why = {"R4": "costs money", "R5": "can't be undone"}.get(str(info.get("risk")), "needs your OK")
-        head = QLabel(f"⚠  Needs your OK: <b>{info.get('tool')}</b> ({info.get('risk')}, {why})")
+        head = QLabel("⏸  <b>More tokens to finish?</b> (this project's budget for today)" if tokens else
+                      f"⚠  Needs your OK: <b>{info.get('tool')}</b> ({info.get('risk')}, {why})")
         head.setStyleSheet(f"color: {edge}; font-size: 14px; background: transparent;")
         v.addWidget(head)
         body = QLabel(str(info.get("summary") or "") + (f"<br><span style='color:{theme.TEXT_DIM}'>on {info.get('host')}</span>"
@@ -655,7 +658,10 @@ class ApprovalCard(QFrame):
         v.addWidget(body)
         if info.get("rehearsal"):
             import json as _json
-            details = QLabel(_json.dumps(info["rehearsal"], indent=1, ensure_ascii=False)[:600])
+            r = info["rehearsal"]
+            details = QLabel(f"Used today {int(r.get('used_today', 0)):,}  ·  today's limit {int(r.get('cap_today', 0)):,}  ·  "
+                             f"asking for {int(r.get('asking_for', 0)):,}" if tokens else
+                             _json.dumps(r, indent=1, ensure_ascii=False)[:600])
             details.setWordWrap(True)
             details.setStyleSheet(f"color: {theme.TEXT_DIM}; font-family: Consolas, monospace; font-size: 12px; background: transparent;")
             v.addWidget(details)
