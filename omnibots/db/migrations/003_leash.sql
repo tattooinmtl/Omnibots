@@ -6,3 +6,14 @@ ALTER TABLE jobs ADD COLUMN origin TEXT NOT NULL DEFAULT 'user';
 
 -- off: the bots start nothing on their own here. watch: checks and reports only. fix: may open repair jobs.
 ALTER TABLE projects ADD COLUMN autonomy TEXT NOT NULL DEFAULT 'watch';
+
+-- A9.c.03: background tokens the user added for one bot in one project, for one day
+-- (on top of [budgets] background_tokens_per_bot). Omi and work the user starts have no allocation.
+CREATE TABLE token_allocations (
+    project_id   TEXT NOT NULL,
+    bot_id       TEXT NOT NULL,
+    day          TEXT NOT NULL,                      -- the user's local date, YYYY-MM-DD
+    extra_tokens INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (project_id, bot_id, day)
+);

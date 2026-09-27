@@ -25,7 +25,8 @@ from omnibots.providers.toolcalls import (
     build_param_registry, extract_think, has_tool_intent, parse_text_tool_calls, recovery_message,
     strip_think, strip_tool_call_text,
 )
-from omnibots.runtime.approvals import MORE_TOKENS, ApprovalCenter
+from omnibots.board.types import topic_project
+from omnibots.runtime.approvals import ALLOCATED, MORE_TOKENS, ApprovalCenter
 from omnibots.runtime.context import first_user_goal, maybe_auto_compact, steering_message, trim_old_tool_results
 from omnibots.runtime.events import BotEvents, ToolTextFilter
 from omnibots.runtime.sandbox import Sandbox
@@ -189,10 +190,12 @@ class BotAgent:
                     nudged = True
                     msgs.append({"role": "user", "content": "[system note] Only 3 tool iterations remain this turn. Finish the smallest complete unit of work, verify if possible, then summarize what is done and what remains."})
 
-                if self.budget and (over := await self.budget.check_project(job_id)) and not await self._ask_for_more_tokens(over, msgs, job_id):
-                    why = f"this project's tokens for today are used up ({over['used']:,}/{over['cap']:,}) and you didn't add more"
+                if (self.budget and self.priority != "boss" and (over := await self.budget.check_allocation(job_id, self.bot_id))
+                        and not await self._ask_for_more_tokens(over, msgs, job_id)):
+                    why = (f"this bot's background tokens for today in this project are used up "
+                           f"({over['used']:,}/{over['cap']:,}) and no more were allocated")
                     await ev.emit("console", f"■ {why}; stopping here")
-                    await ev.set_state("blocked", "project token budget")
+                    await ev.set_state("blocked", "background tokens used up")
                     await ev.flush()
                     return TurnResult("budget", "", self.step, msgs, total_calls, error=why, models_used=models)
                 if self.budget and (why := await self.budget.check_tokens(self.bot_id)):
@@ -291,23 +294,34 @@ class BotAgent:
         await ev.emit("console", f"✔ MiniMax seat {self.seat.number} booked for this job")
 
     async def _ask_for_more_tokens(self, over: dict[str, Any], msgs, job_id) -> bool:
-        """A9.c.03: the project's tokens for today are used up. Estimate what finishing needs and ask
-        the user (an approval card, like R4). Yes → that much more for today, and the bot goes on."""
+        """A9.c.03: this bot's background tokens for today in this project are used up. It asks Omi on
+        the board with its estimate; Omi puts the request to the user (a card in Omi's window).
+        Yes → that much more for this bot today, and it goes on from the same step."""
+        from omnibots.bots.profile import BOSS_ID              # here, not at the top: bots imports runtime
         ev = self.events
-        used, cap = over["used"], over["cap"]
-        await ev.emit("console", f"■ this project used its tokens for today ({used:,}/{cap:,}); asking you for more")
+        pid, used, cap = over["project_id"], over["used"], over["cap"]
+        await ev.emit("console", f"■ my background tokens for today are used up ({used:,}/{cap:,}); asking Omi for more")
         est, why = await self._estimate_tokens_left(msgs, job_id)
-        summary = (f"This project used its {cap:,} tokens for today. {self.bot_id} estimates about {est:,} more "
-                   f"to finish this job: {why} Approve to add {est:,} tokens for today.")
-        await ev.set_state("waiting_approval", "more tokens")
+        if self.budget.bus:
+            await self.budget.bus.publish(
+                topic_project(pid), "HELP_REQUEST",
+                {"text": f"I used my {cap:,} background tokens for today in this project. I need about {est:,} more to finish: {why}",
+                 "kind": MORE_TOKENS, "tokens": est},
+                sender_type="bot", sender_id=self.bot_id, recipient_id=BOSS_ID, project_id=pid, job_id=job_id)
+        summary = (f"{self.name} used its {cap:,} background tokens for today on this project and needs about {est:,} more "
+                   f"to finish: {why} Approve to allocate {est:,} more tokens to {self.name} for today.")
+        await ev.set_state("waiting_approval", "more tokens (asked Omi)")
         with self.waiting_on_user():
-            decision = await self.approvals.request(bot_id=self.bot_id, job_id=job_id, tool=MORE_TOKENS, risk="R2", summary=summary,
-                                                    rehearsal={"used_today": used, "cap_today": cap, "asking_for": est})
+            decision = await self.approvals.request(
+                bot_id=BOSS_ID, job_id=job_id, tool=MORE_TOKENS, risk="R2", summary=summary,
+                rehearsal={"bot": self.bot_id, "bot_name": self.name, "project": pid,
+                           "used_today": used, "allocated_today": cap, "asking_for": est})
         if not decision.approved:
             return False
-        # a step can overshoot the cap: the grant covers that, so `est` really is what's left to spend
-        new_cap = await self.budget.add_project_tokens(over["project_id"], est + max(0, used - cap))
-        await ev.emit("console", f"✔ +{est:,} tokens for today (this project's cap is now {new_cap:,})")
+        if not decision.reason.startswith(ALLOCATED):           # the allocations window already added it
+            # a step can overshoot: the grant covers that too, so `est` really is what's left to spend
+            await self.budget.allocate(pid, self.bot_id, est + max(0, used - cap))
+        await ev.emit("console", f"✔ more tokens allocated (today: {await self.budget.allocation_today(pid, self.bot_id):,})")
         return True
 
     async def _estimate_tokens_left(self, msgs, job_id) -> tuple[int, str]:

@@ -646,7 +646,8 @@ class ApprovalCard(QFrame):
         v.setContentsMargins(16, 12, 16, 12)
         v.setSpacing(8)
         why = {"R4": "costs money", "R5": "can't be undone"}.get(str(info.get("risk")), "needs your OK")
-        head = QLabel("⏸  <b>More tokens to finish?</b> (this project's budget for today)" if tokens else
+        who = (info.get("rehearsal") or {}).get("bot_name") or (info.get("rehearsal") or {}).get("bot") or "a bot"
+        head = QLabel(f"⏸  <b>Omi asks: more tokens for {who}?</b> (background work, today)" if tokens else
                       f"⚠  Needs your OK: <b>{info.get('tool')}</b> ({info.get('risk')}, {why})")
         head.setStyleSheet(f"color: {edge}; font-size: 14px; background: transparent;")
         v.addWidget(head)
@@ -659,7 +660,7 @@ class ApprovalCard(QFrame):
         if info.get("rehearsal"):
             import json as _json
             r = info["rehearsal"]
-            details = QLabel(f"Used today {int(r.get('used_today', 0)):,}  ·  today's limit {int(r.get('cap_today', 0)):,}  ·  "
+            details = QLabel(f"Used today {int(r.get('used_today', 0)):,}  ·  allocated {int(r.get('allocated_today', 0)):,}  ·  "
                              f"asking for {int(r.get('asking_for', 0)):,}" if tokens else
                              _json.dumps(r, indent=1, ensure_ascii=False)[:600])
             details.setWordWrap(True)

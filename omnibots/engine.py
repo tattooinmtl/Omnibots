@@ -42,6 +42,7 @@ from omnibots.lineup import CHEAP_FIRST, MINIMAX
 from omnibots.orchestrator.forge import ToolForge
 from omnibots.orchestrator.playbooks import PlaybookStore
 from omnibots.runtime.pools import runner_pools
+from omnibots.runtime.approvals import ALLOCATED, MORE_TOKENS
 from omnibots.security.budget import Budget
 from omnibots.security.vault import Vault
 from omnibots.projects.graph import PlanRunner, TaskGraph
@@ -177,6 +178,7 @@ class Engine:
         await self._load_omni()
         self._stage("Cleaning up after the last session", 0.40)
         self.bus = MessageBus(self.db)
+        self.budget.bus = self.bus                               # A9.c.03: a bot's ask for tokens goes to Omi
         self.locks = LeaseManager(self.db, self.bus)
         await self.locks.clear_all()                       # leases never survive a restart
         await self._recover_orphans()                      # nor do running jobs (A6.c.01)
@@ -478,6 +480,39 @@ class Engine:
 
     async def set_autonomy(self, project_id: str, level: str) -> str:
         return await self.leash.set_level(project_id, level)
+
+    # ── token allocations (A9.c.03) ────────────────────────────────────────
+    async def ui_allocations(self) -> dict[str, Any]:
+        """For the Token allocations window: every open project, the bots created in it (idle or
+        working) with today's background tokens used and allocated, and any ask waiting for you."""
+        asks = {(a["rehearsal"].get("project"), a["rehearsal"].get("bot")): a["id"]
+                for a in self.approvals.list_pending() if a.get("tool") == MORE_TOKENS and a.get("rehearsal")}
+        projects = []
+        for p in await self.db.read("SELECT id, goal, autonomy FROM projects WHERE status != 'cancelled' ORDER BY created_at DESC LIMIT 20"):
+            bots = []
+            for r in await self.db.read(
+                    "SELECT DISTINCT assigned_bot_id AS b FROM jobs WHERE project_id=? AND assigned_bot_id IS NOT NULL AND assigned_bot_id != ?",
+                    (p["id"], BOSS_ID)):
+                prof = await self.registry.get(r["b"])
+                if not prof or prof.status == "archived":
+                    continue
+                bots.append({"id": prof.id, "name": prof.name, "role": prof.role,
+                             "state": "working" if prof.id in self.runner.active else "idle",
+                             "used": await self.budget.background_used_today(p["id"], prof.id),
+                             "allocated": await self.budget.allocation_today(p["id"], prof.id),
+                             "asking": asks.get((p["id"], prof.id))})
+            projects.append({"id": p["id"], "goal": p["goal"], "autonomy": p["autonomy"], "bots": bots})
+        return {"per_bot": int(self.budget.limits["background_tokens_per_bot"]), "projects": projects}
+
+    async def allocate_tokens(self, project_id: str, bot_id: str, tokens: int) -> int:
+        """The user adds background tokens for one bot in one project, for today. A card the bot
+        is waiting on for that project is approved too (the bot goes on without adding again)."""
+        total = await self.budget.allocate(project_id, bot_id, tokens)
+        for a in self.approvals.list_pending():
+            r = a.get("rehearsal") or {}
+            if a.get("tool") == MORE_TOKENS and r.get("project") == project_id and r.get("bot") == bot_id:
+                await self.approvals.decide(a["id"], True, f"{ALLOCATED} {int(tokens):,} from the Token allocations window")
+        return total
 
     async def _night_run(self, item: dict[str, Any]) -> None:
         """Night shift: low-priority work on the cheap lane while the user is away."""

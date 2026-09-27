@@ -22,6 +22,7 @@ EXPECTED_TABLES = {
     "tools", "playbooks", "playbook_runs", "routines", "triggers", "approvals", "secrets_index",
     "locks", "parameters", "audit_logs",
     "spend_events",                                       # 002 (A9)
+    "token_allocations",                                  # 003 (A9.c.03)
 }
 LATEST = len(list_migrations())
 

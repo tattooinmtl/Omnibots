@@ -263,6 +263,8 @@ class Tray(QObject):
         bg.setToolTip("Holds everything the bots would start on their own: checks after file changes, repairs, "
                       "routines, triggers, the night shift. Your own goals and chats still run.")
         bg.toggled.connect(self.set_background_paused)
+        self._act(m, "🪙  Token allocations…", self.open_allocations,
+                  tip="Background tokens per bot in each project today; add more for a bot")
         projects = s.get("projects", [])
         if not projects:
             return
@@ -279,6 +281,10 @@ class Tray(QObject):
                 a.setChecked(p["autonomy"] == level)
                 a.setToolTip(tips[level])
                 a.triggered.connect(lambda _=False, pid=p["id"], lv=level: self.set_autonomy(pid, lv))
+
+    def open_allocations(self) -> None:
+        from omnibots.ui.allocations import open_allocations
+        self._alloc_win = open_allocations(self.engine)
 
     def set_background_paused(self, on: bool) -> None:
         self._later(self.engine.set_background_paused(on), "Background work",
