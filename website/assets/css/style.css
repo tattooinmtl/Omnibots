@@ -133,3 +133,6 @@ dialog#lightbox .close { position: sticky; top: 10px; float: right; margin: 10px
 .manual { margin-top: 16px; }
 .manual summary { cursor: pointer; color: var(--dim); font-weight: 600; margin-bottom: 10px; }
 .manual summary:hover { color: var(--text); }
+
+/* long commands wrap instead of hiding under the Copy button */
+.code pre { padding-right: 96px; white-space: pre-wrap; overflow-wrap: anywhere; }
