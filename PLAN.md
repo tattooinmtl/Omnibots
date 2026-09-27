@@ -983,9 +983,9 @@ _(empty)_
 - **A15.a.04** ⏳ **Re-run the live tests** (`OMNIBOTS_LIVE=1`, 14 tests in 7 files) on the current code; last passed 2026-09-25, before 0.2.0.
 
 #### A15.b — The leash
-- **A15.b.01** ⏳ **Who started it.** Every run carries an origin: `user` (a goal or chat you started), `watch` (file change), `routine`, `night`, `relay`, `continue` (A15.d). Stored on the job (migration) and shown on the board and the bot card. Background = every origin except `user`.
-- **A15.b.02** ⏳ **Autonomy dial per project: Off / Watch / Fix.** Off = the bots listen and answer, start nothing. Watch = checks and reports, starts no fix. Fix = may open jobs to repair. **Default for new projects: Watch** (user, 2026-09-27). The tray gets **"Pause background work"** (all projects; Panic stays separate). Every background start checks the dial first.
-- **A15.b.03** ⏳ **Calmer file watch.** Today (A7.a.15) any change in an open project starts an Omi turn after 90 s, the user's own edits included. It waits until the folder is quiet for a few minutes (setting), one burst = one check, whoever made it, and follows the dial.
+- **A15.b.01** ✅ **Who started it.** Every run carries an origin: `user` (a goal or chat you started), `watch` (file change), `routine`, `night`, `relay`, `continue` (A15.d). Stored on the job (migration) and shown on the board and the bot card. Background = every origin except `user`.
+- **A15.b.02** ✅ **Autonomy dial per project: Off / Watch / Fix.** Off = the bots listen and answer, start nothing. Watch = checks and reports, starts no fix. Fix = may open jobs to repair. **Default for new projects: Watch** (user, 2026-09-27). The tray gets **"Pause background work"** (all projects; Panic stays separate). Every background start checks the dial first.
+- **A15.b.03** ✅ **Calmer file watch.** Today (A7.a.15) any change in an open project starts an Omi turn after 90 s, the user's own edits included. It waits until the folder is quiet for a few minutes (setting), one burst = one check, whoever made it, and follows the dial.
 - Budget: **A9.c.03** ✅ (the project cap that asks). The team/bot caps (A9.c.02) stay as they are.
 
 #### A15.c — Honest "done" (Grok F6)
@@ -1022,6 +1022,12 @@ _(empty)_
 - **A15.99** ⏳ **Acceptance (live, real providers):** a project on Fix with a live URL: the URL breaks overnight and a repair job fixes it without anyone typing a goal; the "while you were away" card reports it. On Watch the same break is only reported. Quit mid-job and reopen: the job continues. Stop: it stays stopped. Close project: the checks stop. A claim that cites a failing test is rejected with the output. A project over its tokens asks for more with an estimate.
 
 **Notes:**
+- 2026-09-27 Claude: PASSED A15.b (the leash)
+  - Files: `omnibots/bots/leash.py` (new: origins, the dial, the pause, `may_start`), `omnibots/db/migrations/003_leash.sql` (`jobs.origin` default 'user', `projects.autonomy` default 'watch'), `bots/runner.py` (`run(origin=)`; stored on the job; CURRENT_ORIGIN for the run so work it creates inherits it; `WORK_STARTED` carries origin + why; a console line "started on its own: …"), `projects/graph.py` (`add_job` stamps the inherited origin; a job made inside a `watch` check is `fix`), `bots/presence.py` (pickups gated with one "holding" note per job; the check on Watch gets only `list_jobs`/`list_team`/`find_skills`/`review_work` and a report-only prompt, titled `[check]`; the settle window), `engine.py` (Leash loaded at startup; routines/triggers go through `_background_goal`, skipped with a board note while paused; goals carry their origin; tray data has `background_paused` + open projects' dials), `projects/schedule.py` (`NightShift(held=)`), `ui/tray.py` ("🔕 Pause background work", "Projects on their own" → Off/Watch/Fix), `settings.py` (`watch_settle_seconds = 180`), `tests/test_leash.py` (6).
+  - Side effects: existing projects become Watch after the migration (was: every file change could start fixes). Omi's own profile tools still come with a Watch check (today only `read_file`, `list_dir`). The bot card doesn't show the origin yet (A15.g.02/g.03); the board and the bot's console do.
+  - Tests: `python -m pytest` → 428 passed, 14 skipped. Migration 003 applied to a read-only backup copy of the user's real database: schema 2 → 3, 3 projects → watch, 16 jobs → user.
+  - Notes: not yet seen in the running app (the user's instance wasn't restarted); check the tray menu after the next start on this build. Real data: the website project used 805,021 tokens on 2026-09-26, so the 200k project limit (A9.c.03) would have asked about three times that day.
+  - Goal: origin on every run, the Off/Watch/Fix dial + Pause background work, calmer file watch
 - 2026-09-27 Claude: A15 added (the re-plan of `grok_audit.md` §7 with the user). Built so far: A9.c.03 (the budget that asks). Cross-phase: A7.a.11 and A7.a.15 change under A15.d/b.03; A8.d.06 added; §7 decisions 7–8.
 
 ### A14 — End-to-end acceptance (the team works)

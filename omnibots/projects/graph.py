@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from omnibots.board.types import topic_job, topic_project
+from omnibots.bots.leash import CURRENT_ORIGIN, child_origin
 
 DONE = {"completed"}
 DEAD = {"failed", "cancelled"}
@@ -85,9 +86,9 @@ class TaskGraph:
             status = "blocked"
         await self.db.write(
             "INSERT INTO jobs (id, project_id, title, description, status, priority, depends_on_json, done_criteria, verifier, "
-            "budget_json, risk_ceiling, assigned_bot_id, created_by, attempts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0)",
+            "budget_json, risk_ceiling, assigned_bot_id, created_by, attempts, origin) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)",
             (jid, project_id, title, description, status, priority, json.dumps(deps), done_criteria, verifier,
-             json.dumps(budget or {}), risk_ceiling, assigned_bot_id, created_by))
+             json.dumps(budget or {}), risk_ceiling, assigned_bot_id, created_by, child_origin(CURRENT_ORIGIN.get())))
         if self.bus:
             await self.bus.publish(topic_project(project_id), "TASK_PLANNED",
                                    {"job_id": jid, "title": title, "depends_on": deps, "done_criteria": done_criteria},

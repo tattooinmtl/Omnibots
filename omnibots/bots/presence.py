@@ -20,6 +20,7 @@ from typing import Any, Awaitable, Callable
 from omnibots.board.a2a import Inbox
 from omnibots.board.query import query
 from omnibots.board.types import topic_project
+from omnibots.bots.leash import Leash
 from omnibots.bots.profile import BOSS_ID
 from omnibots.orchestrator.boss_tools import BossToolkit, GoalContext
 
@@ -37,6 +38,20 @@ Recent board:
 Read those files and list_jobs. If something is broken, fix it or assign_job a bot who can.
 If a job is already assigned, leave it — that bot reads the board and will pick it up.
 Do not close the project. When the check is done, give a short report of what you looked at and what you fixed."""
+
+# A15.b.02: on Watch, Omi looks and reports. The tools that start or change work aren't given.
+WATCH_PROMPT = """CHECK (report only). The project is still open and on WATCH: you look and report, you don't fix.
+
+Files that changed since the last look:
+{changes}
+
+Recent board:
+{board}
+
+Read those files and list_jobs. Do not edit files, plan, assign or create bots. If something looks broken, say
+exactly what and how you would fix it; the user decides (switching this project to Fix lets you repair it).
+Give a short report: what you looked at, what is fine, what is broken."""
+WATCH_TOOLS = {"list_jobs", "list_team", "find_skills", "review_work"}
 
 
 def snapshot(folder: Path) -> dict[str, tuple[int, int]]:
@@ -72,13 +87,18 @@ def diff_snapshots(old: dict[str, tuple[int, int]], new: dict[str, tuple[int, in
 
 class TeamPresence:
     def __init__(self, *, db, bus, registry, runner, graph, projects, orchestrator,
-                 poll_seconds: float = 5.0, maintain_cooldown: float = 90.0,
-                 paused: Callable[[], bool] | None = None,
+                 poll_seconds: float = 5.0, maintain_cooldown: float = 90.0, settle_seconds: float = 0.0,
+                 paused: Callable[[], bool] | None = None, leash: Leash | None = None,
                  maintain: Callable[[str, list[str]], Awaitable[Any]] | None = None,
                  sleep=asyncio.sleep, clock=time.monotonic):
         self.db, self.bus, self.registry, self.runner = db, bus, registry, runner
         self.graph, self.projects, self.orchestrator = graph, projects, orchestrator
         self.poll, self.maintain_cooldown = poll_seconds, maintain_cooldown
+        self.settle = settle_seconds          # A15.b.03: the folder must be quiet this long before Omi checks it
+        self.leash = leash
+        self._seen: dict[str, dict[str, tuple[int, int]]] = {}
+        self._changed_at: dict[str, float] = {}
+        self._held_told: set[str] = set()     # jobs whose "held by the leash" note is already on the board
         self._paused = paused or (lambda: False)
         self._maintain_fn = maintain
         self._sleep, self._clock = sleep, clock
@@ -161,6 +181,16 @@ class TeamPresence:
         job = await self.graph.get(row["id"])
         if not job:
             return
+        if self.leash:
+            origin = (await self.db.read_one("SELECT origin FROM jobs WHERE id=?", (job.id,)))["origin"]
+            if why := await self.leash.may_start(origin, job.project_id):
+                if job.id not in self._held_told:
+                    self._held_told.add(job.id)
+                    await self.bus.publish(topic_project(job.project_id) if job.project_id else "#general", "PROGRESS_UPDATE",
+                                           {"text": f"{bot_id} is holding '{job.title}': {why}."}, sender_type="system",
+                                           project_id=job.project_id, job_id=job.id)
+                return
+            self._held_told.discard(job.id)
         for ctx in getattr(self.orchestrator, "goals", {}).values():
             task = ctx.worker_tasks.get(job.id)
             if task is not None and not task.done():
@@ -201,7 +231,7 @@ class TeamPresence:
         self._notes[bot_id] = []
         text = "The user wrote on the board while you were listening:\n" + "\n".join(notes)
         self._jobs[bot_id] = asyncio.create_task(
-            self.runner.run(bot_id, text, title=notes[0][:80]), name=f"note-{bot_id}")
+            self.runner.run(bot_id, text, title=notes[0][:80], origin="user"), name=f"note-{bot_id}")
 
     def _project_busy(self, folder: Path) -> bool:
         try:
@@ -234,8 +264,14 @@ class TeamPresence:
             if not changes:
                 continue
             now = self._clock()
+            if self._seen.get(pid) != new:                 # still changing: wait for the folder to settle
+                self._seen[pid], self._changed_at[pid] = new, now
+            if now - self._changed_at.get(pid, now) < self.settle:
+                continue
             if now - self._last_maintain.get(pid, -1e9) < self.maintain_cooldown:
                 continue
+            if self.leash and await self.leash.may_start("watch", pid):
+                continue                                   # Off or paused: the changes wait, checked when allowed again
             self._last_maintain[pid] = now
             self._snapshots[pid] = new
             self._maintaining.add(pid)
@@ -274,9 +310,11 @@ class TeamPresence:
                           planner_chain=self.orchestrator.planner_chain, playbooks=self.orchestrator.playbooks)
         board = await query(self.db, project=pid, limit=12)
         board_text = "\n".join(f"- {m.message_type}: {m.text()[:180]}" for m in board[-12:]) or "(nothing yet)"
-        prompt = MAINTAIN_PROMPT.format(changes="\n".join(f"- {c}" for c in changes[:40]), board=board_text)
+        fix = (await self.leash.level(pid) == "fix") if self.leash else True
+        tools = kit.tools() if fix else [t for t in kit.tools() if t.name in WATCH_TOOLS]
+        prompt = (MAINTAIN_PROMPT if fix else WATCH_PROMPT).format(changes="\n".join(f"- {c}" for c in changes[:40]), board=board_text)
         try:
-            await self.runner.run(BOSS_ID, prompt, title=f"[maintain] {goal[:60]}", project_id=pid, workspace=folder,
-                                  extra_tools=kit.tools(), inbox=inbox, max_iterations=80)
+            await self.runner.run(BOSS_ID, prompt, title=f"[{'maintain' if fix else 'check'}] {goal[:60]}", project_id=pid,
+                                  workspace=folder, extra_tools=tools, inbox=inbox, max_iterations=80, origin="watch")
         finally:
             inbox.close()

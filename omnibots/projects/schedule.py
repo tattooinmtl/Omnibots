@@ -249,8 +249,10 @@ def idle_seconds() -> float:
 
 class NightShift:
     def __init__(self, run: Callable[[dict[str, Any]], Awaitable[Any]], *, idle_after: float = 15 * 60,
-                 idle: Callable[[], float] = idle_seconds, sleep=asyncio.sleep, check_every: float = 60.0):
+                 idle: Callable[[], float] = idle_seconds, sleep=asyncio.sleep, check_every: float = 60.0,
+                 held: Callable[[], bool] = lambda: False):
         self.run, self.idle_after, self.idle, self.sleep, self.check_every = run, idle_after, idle, sleep, check_every
+        self.held = held                                        # A15.b.02: "Pause background work" keeps the queue waiting
         self.queue: list[dict[str, Any]] = []
         self.running = False
 
@@ -263,7 +265,7 @@ class NightShift:
 
     async def step(self) -> bool:
         """Run the next queued item if the user is away. Returns True if it ran one."""
-        if self.running or not self.queue or not self.user_away:
+        if self.running or not self.queue or not self.user_away or self.held():
             return False
         item = self.queue.pop(0)
         self.running = True

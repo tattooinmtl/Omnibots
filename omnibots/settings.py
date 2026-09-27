@@ -45,6 +45,9 @@ goal_minutes = 30
 stall_minutes = 5
 # How often each bot reads the board and Omi checks project folders for changes.
 listen_seconds = 5
+# PLAN.md A15.b.03: a project folder must be quiet this long before Omi checks the changes
+# (one burst of edits = one check, yours included).
+watch_settle_seconds = 180
 
 [skills]
 # Extra skill libraries the bots can use (on top of Omni's skills and ~/.omnibots/skills).
