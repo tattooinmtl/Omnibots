@@ -505,4 +505,4 @@ class LiveUI(QObject):
                         reply(lambda pid: f"On it! Working on this{where} ({pid}). Watch the board for the team's progress."))
         else:
             self._later(self.engine.tell(bot, text), reply(
-                lambda _r: "I'm not working right now; your message is on the board for my next job. (Ask Omi to start new work.)"))
+                lambda _r: "Heard. I keep reading the board, so I'll pick this up if it's mine. Ask Omi when it needs a new job."))

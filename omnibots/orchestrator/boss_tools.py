@@ -78,6 +78,8 @@ class BossToolkit:
             out = await self.runner.run(bot_id, self._job_task(job), title=job.title, job_id=job.id,
                                         project_id=self.c.project_id, workspace=self.c.folder,
                                         budget=job.budget or None)
+            if out.status == "skipped":
+                return out
             await self.projects.commit(self.c.project_id, f"{job.title} ({bot_id})", author=bot_id)
             if out.status == "completed":
                 await self.graph._set(await self.graph.get(job.id), "review")      # done only when the boss accepts
