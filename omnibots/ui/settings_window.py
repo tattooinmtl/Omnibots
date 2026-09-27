@@ -1,5 +1,5 @@
-"""Settings (PLAN.md A11.a): the "Bots & icons" legend the user asked for (2026-09-26):
-which badge means which job, and which extra Omi shows for which action."""
+"""Settings (PLAN.md A11.a): Folders (where the bots' projects go, A11.m.01) and the "Bots & icons"
+legend the user asked for (2026-09-26): which badge means which job, and which extra Omi shows for which action."""
 
 from __future__ import annotations
 
@@ -88,8 +88,55 @@ def icons_legend() -> QWidget:
     return scroll
 
 
+def folders_tab(engine=None, settings_path=None) -> QWidget:
+    """Settings → Folders: the output folder (new goals go there; existing projects stay put)."""
+    from pathlib import Path
+
+    from PySide6.QtWidgets import QPushButton
+
+    from omnibots.paths import get_paths
+    from omnibots.settings import load_settings, save_setting
+    from omnibots.ui.setup_dialog import FolderPicker, default_output_folder, usable
+
+    path = Path(settings_path) if settings_path else get_paths().settings_file
+    current = load_settings(path)["output"]["folder"] or str(default_output_folder())
+    w = QWidget()
+    v = QVBoxLayout(w)
+    v.setContentsMargins(18, 16, 18, 16)
+    t = QLabel("Output folder")
+    t.setStyleSheet("font-size: 16px; font-weight: 600;")
+    v.addWidget(t)
+    note = QLabel("Every new goal gets a folder here, named with the date and the goal. Projects that already exist stay "
+                  "where they are. To have the bots work in some other folder, use File → Open folder in a bot window.")
+    note.setWordWrap(True)
+    note.setObjectName("dim")
+    v.addWidget(note)
+    w.picker = FolderPicker(Path(current))
+    v.addWidget(w.picker)
+    w.status = QLabel("")
+    v.addWidget(w.status)
+    save = QPushButton("Use this folder")
+    save.setObjectName("primary")
+
+    def apply() -> None:
+        folder = w.picker.folder()
+        why = usable(folder)
+        if why:
+            w.status.setText(f"<span style='color:{theme.RED}'>✖ {why}</span>")
+            return
+        save_setting(path, "output", "folder", str(folder))
+        if engine is not None:
+            engine.set_output_dir(folder)
+        w.status.setText(f"<span style='color:{theme.GREEN}'>✔ New goals go to {folder}</span>")
+    save.clicked.connect(apply)
+    w.apply = apply
+    v.addWidget(save, 0, Qt.AlignmentFlag.AlignLeft)
+    v.addStretch(1)
+    return w
+
+
 class SettingsWindow(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, engine=None, settings_path=None):
         super().__init__(parent)
         self.setWindowTitle("OmniBots · Settings")
         self.setStyleSheet(theme.stylesheet() + f"""
@@ -103,6 +150,8 @@ class SettingsWindow(QDialog):
         v = QVBoxLayout(self)
         v.setContentsMargins(16, 16, 16, 16)
         tabs = QTabWidget()
+        self.folders = folders_tab(engine, settings_path)
+        tabs.addTab(self.folders, "Folders")
         tabs.addTab(icons_legend(), "Bots && icons")          # "&&" = a literal & (a single & marks a shortcut)
         v.addWidget(tabs)
         self.tabs = tabs

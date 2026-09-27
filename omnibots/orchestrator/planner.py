@@ -22,6 +22,9 @@ Rules:
 - 2 to 7 subtasks. Each is one person-sized piece of work with a checkable result.
 - For each subtask give done_criteria: concrete, verifiable conditions (files that must exist, facts that must be cited with URLs, numbers that must be computed).
 - depends_on lists the numbers (1-based) of EARLIER subtasks it needs.
+- done_criteria may only check what THIS subtask or the subtasks it depends on produce. Never require output from a
+  later subtask (e.g. assets can't be "linked from index.html" if index.html is built afterwards: put the linking in the
+  index.html subtask).
 - skills: 1-3 short capability words (e.g. research, writing, python, data, review).
 - risk: R1 for local work, R2 if it reads the web, R3 if it must act online as the user (publish, deploy, email).
 - NEVER name agents, bots, people or tools. Say what must be done and how to know it's done, not who does it or with which tool.

@@ -66,14 +66,19 @@ class EngineSignals(QObject):
     alert = Signal(dict)         # provider cooling/recovered/error, reservoir thresholds
     bot_event = Signal(dict)     # console / terminal / thinking / state / tool from running bots (A11 bot windows)
     board_message = Signal(dict) # every message on the board, live (the bot windows' Message Board)
+    startup_stage = Signal(str, float)  # (what's loading, 0..1): the splash follows the real startup
 
 
 class Engine:
     def __init__(self, db_path: Path, *, keep_awake: bool = True, shutdown_timeout: float = 10.0,
                  omni_install_root: str = "", watch_interval: float = 2.0, home: Path | None = None,
                  orchestrator_settings: dict[str, Any] | None = None, mcp_risk: dict[str, str] | None = None,
-                 budgets: dict[str, Any] | None = None):
+                 budgets: dict[str, Any] | None = None, output_dir: str | Path | None = None, approvals_ask_from: str = "R3",
+                 skill_folders: list[str] | None = None):
         self.db = Database(db_path)
+        self.output_dir = Path(output_dir) if output_dir else None      # A11.m.01: the user's output folder
+        self.approvals_ask_from = approvals_ask_from                          # settings [approvals] ask_from
+        self.skill_folders = list(skill_folders or [])                        # settings [skills] folders
         self.home = home or db_path.parent.parent            # ~/.omnibots (db lives in <home>/db/)
         self.orch_settings = dict(orchestrator_settings or {})
         self.mcp_risk = dict(mcp_risk or {})
@@ -118,8 +123,20 @@ class Engine:
 
     # ── start ──────────────────────────────────────────────────────────
     def start(self, timeout: float = 15.0) -> None:
+        self.begin()
+        self.wait_started(timeout)
+
+    def begin(self) -> None:
+        """Start the engine thread without waiting (the splash animates meanwhile)."""
         self._thread = threading.Thread(target=self._run, name="engine", daemon=True)
         self._thread.start()
+
+    @property
+    def started(self) -> bool:
+        return self._ready.is_set()
+
+    def wait_started(self, timeout: float = 15.0) -> None:
+        """Wait for startup; raise its error, if any."""
         if not self._ready.wait(timeout):
             raise TimeoutError("engine did not start in time")
         if self._start_error:
@@ -143,27 +160,37 @@ class Engine:
             self.loop.close()
             log.info("engine loop closed")
 
+    def _stage(self, text: str, done: float) -> None:
+        self.signals.startup_stage.emit(text, done)
+
     async def _startup(self) -> None:
+        self._stage("Opening the database", 0.05)
         await self.db.open()
         await self.db.audit("system", None, "session_start", json.dumps({"version": __version__}))
+        self._stage("Unlocking the vault", 0.15)
         self.vault = Vault(self.db)
         n = await self.vault.load()                        # every value registered for redaction (A9.c.01)
         log.info("vault: %d secret(s) indexed", n)
         self.budget = Budget.from_settings(self.db, self.budget_settings)
+        self._stage("Reading Omni's providers and skills", 0.25)
         await self._load_omni()
+        self._stage("Cleaning up after the last session", 0.40)
         self.bus = MessageBus(self.db)
         self.locks = LeaseManager(self.db, self.bus)
         await self.locks.clear_all()                       # leases never survive a restart
         await self._recover_orphans()                      # nor do running jobs (A6.c.01)
         self.ledger = Ledger(self.db, self.bus, boss_id=BOSS_ID)
+        self._stage("Providers, seats and quotas", 0.50)
         self.quota = QuotaManager(self.db, on_event=self._on_provider_event)
         await self.quota.load()
         self.seats = SeatScheduler(boss_id=BOSS_ID, on_event=self._on_provider_event)
         self.router = Router(lambda: self.omni, self.quota, self.seats)
-        self.approvals = ApprovalCenter(self.db, on_event=self._on_provider_event)
+        self.approvals = ApprovalCenter(self.db, on_event=self._on_provider_event, ask_from=self.approvals_ask_from)
+        self._stage("Waking up Omi and the team", 0.60)
         self.registry = BotRegistry(self.db, self.home / "bots", self.bus)
         await self.registry.ensure_boss()                     # Omi always exists (id "omi")
-        pools = runner_pools(lambda: self.omni, self.home, self.router, self.locks, self.mcp_risk)   # A8 skill & tool pools
+        self._stage("Loading tools, skills and MCP servers", 0.70)
+        pools = runner_pools(lambda: self.omni, self.home, self.router, self.locks, self.mcp_risk, self.skill_folders)   # A8 skill & tool pools
         self.mcp = pools["mcp"]
         self.runner = JobRunner(db=self.db, registry=self.registry, router=self.router, approvals=self.approvals,
                                 home=self.home, sandbox=Sandbox(self.home / "sandbox"), bus=self.bus, ledger=self.ledger,
@@ -174,7 +201,18 @@ class Engine:
         self.computers = ComputerClient(lambda bot: self.vault.value(f"computer_{bot}"),
                                         owner_key=self._computers_owner_key, store_secret=self._store_computer_login)
         self.runner.computers = self.computers
-        self.projects = ProjectStore(self.db, self.home / "projects", self.bus)
+        self._stage("Projects and the output folder", 0.82)
+        self.projects = ProjectStore(self.db, self.home / "projects", self.bus, output_dir=self.output_dir,
+                                     history_dir=self.home / "project-history")
+        await self.projects.load()
+        if self.output_dir:
+            try:
+                for pid, new in await self.projects.move_old_projects():            # A11.m.02, once
+                    log.info("moved project %s to %s", pid, new)
+                    await self.db.audit("system", None, "project_moved", json.dumps({"project": pid, "path": str(new)}))
+            except Exception:
+                log.exception("could not move the old projects to %s", self.output_dir)
+        self._stage("Orchestrator, routines and team controls", 0.92)
         self.playbooks = PlaybookStore(self.db, self.bus)                  # A8.c.01
         self.graph = TaskGraph(self.db, self.bus)
         self.plans = PlanRunner(self.graph, self.runner.run, workspace_for=self.projects.folder)
@@ -193,7 +231,7 @@ class Engine:
             require_approval=bool(o.get("require_approval_for_new_bots", False)))), db=self.db, quota=self.quota)
         self.orchestrator = Orchestrator(db=self.db, bus=self.bus, registry=self.registry, runner=self.runner, graph=self.graph,
                                          projects=self.projects, ledger=self.ledger, router=self.router, factory=self.factory,
-                                         skills=lambda: (self.omni.skills if self.omni else []),
+                                         skills=lambda: self.runner.skill_pool.all(),       # Omni + OmniBots + library folders
                                          goal_seconds=float(o.get("goal_minutes", 30)) * 60,
                                          playbooks=self.playbooks)
         self.team = TeamController(db=self.db, bus=self.bus, runner=self.runner, graph=self.graph, orchestrator=self.orchestrator,
@@ -201,6 +239,7 @@ class Engine:
         self.spawn(self.team.monitor(), name="stall-monitor")
         self.spawn(self._forward_board(), name="board-to-ui")
         self.accepting = True
+        self._stage("Ready", 1.0)
         self.signals.started.emit({"schema_version": self.db.schema_version})
 
     # ── Omni bridge (A1) ───────────────────────────────────────────────
@@ -264,11 +303,19 @@ class Engine:
         await self.db.audit("system", None, kind, json.dumps(data))
         self.signals.alert.emit({"kind": kind, **data})
 
+    def set_output_dir(self, folder: Path) -> None:
+        """Settings → Folders: new goals go there from now on (existing projects stay where they are)."""
+        self.output_dir = Path(folder)
+        if self.projects:
+            self.projects.out = self.output_dir
+
     async def start_goal(self, goal: str, info: dict[str, Any] | None = None) -> str:
         """A new goal (from the user, a routine or a trigger): Omi plans it,
-        staffs it, verifies the claims and writes REPORT.md (A7)."""
+        staffs it, verifies the claims and writes REPORT.md (A7).
+        info["folder"]: work in that existing folder (File → Open folder, A11.m.03)."""
         info = info or {}
-        pid = await self.projects.create(goal, created_by=info.get("created_by", "user"))
+        pid = await self.projects.create(goal, created_by=info.get("created_by", "user"),
+                                         folder=Path(info["folder"]) if info.get("folder") else None)
         task = self.spawn(self.orchestrator.run_goal(goal, project_id=pid), name=f"goal-{pid}")
         self.orchestrator.boss_tasks[pid] = task
         await self.db.audit("system", None, "goal_started", json.dumps({"project": pid, **{k: v for k, v in info.items() if k != "created_by"}}))
@@ -367,6 +414,10 @@ class Engine:
         """Every bot with what its ID card needs."""
         quota = self.quota.snapshot() if self.quota else {}
         latest = await self.db.read_one("SELECT id FROM projects ORDER BY created_at DESC LIMIT 1")
+        # a worker's files = the project of its latest job (A11.m.02); Omi's = the latest project
+        last_job = {r["assigned_bot_id"]: r["project_id"] for r in await self.db.read(
+            "SELECT assigned_bot_id, project_id FROM jobs WHERE assigned_bot_id IS NOT NULL AND project_id IS NOT NULL "
+            "ORDER BY COALESCE(started_at, created_at)")}
         # the snapshot ends with a {"waiting": [...]} entry; only real, held seats count here
         seats = {s["holder"]: s["seat"] for s in (self.seats.snapshot() if self.seats else []) if s.get("holder")}
         out = []
@@ -376,6 +427,7 @@ class Engine:
             out.append({"id": b.id, "name": b.name, "role": b.role, "description": b.description, "status": b.status,
                         "model": first, "seat": seats.get(b.id), "usage_pct": float((quota.get(provider) or {}).get("used_pct") or 0),
                         "workspace": str(self.projects.folder(latest["id"]) if (b.id == BOSS_ID and latest and self.projects)
+                                         else self.projects.folder(last_job[b.id]) if (b.id in last_job and self.projects)
                                          else b.workspace), "active": b.id in self.runner.active})
         return out
 

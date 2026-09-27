@@ -14,7 +14,20 @@ A local team of AI bots, **the Guild**. A boss bot plans your goal, lends out Mi
 
 <img src="docs/screenshots/bots-and-icons.png" alt="Job badges and action extras legend" width="600">
 
-## Run
+## Install
+
+In **PowerShell** (Windows 10/11):
+
+```powershell
+irm https://raw.githubusercontent.com/tattooinmtl/Omnibots/master/install.ps1 | iex
+```
+
+It checks for Python 3.12+ and Git (offering to install them with winget), downloads OmniBots into
+`%LOCALAPPDATA%\OmniBots` with its own Python environment, installs the bots' browser, and adds **OmniBots** to the
+Start menu. Run the same line again to update. Options: `-InstallDir`, `-NoShortcut`, `-NoBrowser`, `-Yes`
+(see the top of `install.ps1`). The website: https://omnibots.globalwarningnetworks.com
+
+## Run (from a clone)
 
 ```bash
 pip install -r requirements.lock

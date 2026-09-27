@@ -11,3 +11,10 @@ dist/
 # These catch accidental local homes used while testing.
 .omnibots/
 .omnibots-test*/
+
+# local tooling (preview server config)
+.claude/
+
+# your local media (the app ships the small splash in omnibots/ui/assets/)
+/Logo.png
+/videos/

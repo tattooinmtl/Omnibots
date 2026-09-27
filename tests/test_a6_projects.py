@@ -258,7 +258,7 @@ def test_triggers_file_board_threshold(tmp_path):
         with pytest.raises(ValueError):
             await trg.add("hook", "webhook", {}, "x")                      # A10
         board = asyncio.create_task(trg.board_loop())
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(trg.board_ready.wait(), 10)               # was a fixed 50 ms: flaky under load
         await trg.check_files_and_thresholds()                             # baseline
         watched.write_text("a,b", encoding="utf-8")
         disk["gb"] = 5.0
@@ -266,7 +266,11 @@ def test_triggers_file_board_threshold(tmp_path):
         await trg.check_files_and_thresholds()                             # still below: no second fire
         await bus.publish("#job/x", "TASK_FAILED", {"error": "deploy to netlify failed"})
         await bus.publish("#job/y", "TASK_FAILED", {"error": "unit test failed"})
-        await asyncio.sleep(0.1)
+        for _ in range(200):                                               # wait for delivery, not a fixed 100 ms
+            if len(fired) >= 3:
+                break
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.1)                                           # room for a wrong extra fire to show up
         board.cancel()
         await db.close()
         return fired

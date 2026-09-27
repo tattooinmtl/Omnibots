@@ -14,7 +14,8 @@ from PySide6.QtGui import (
     QColor, QFont, QIcon, QPainter, QPen, QPixmap, QSyntaxHighlighter, QTextCharFormat,
 )
 from PySide6.QtWidgets import (
-    QApplication, QFileIconProvider, QFileSystemModel, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit,
+    QAbstractItemView, QApplication, QFileDialog, QFileIconProvider, QFileSystemModel, QFrame, QHBoxLayout, QLabel, QLayout,
+    QLineEdit, QMenu,
     QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QToolButton, QTreeView, QVBoxLayout, QWidget,
 )
 
@@ -362,12 +363,82 @@ class ChatMessage:
     title: str = ""
 
 
+class AttachButton(QToolButton):
+    """The 📎: attaches files. It wiggles when you point at it and shows how many files are attached."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PySide6.QtCore import QPropertyAnimation
+        self._angle, self.count = 0.0, 0
+        self.setFixedSize(36, 36)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Attach files (the bots can open them)")
+        self.setStyleSheet("QToolButton { border: none; background: transparent; }")
+        self._anim = QPropertyAnimation(self, b"angle", self)
+        self._anim.setDuration(520)
+        for t, a in ((0, 0.0), (0.2, -20.0), (0.45, 15.0), (0.7, -8.0), (1.0, 0.0)):
+            self._anim.setKeyValueAt(t, a)
+
+    def _get_angle(self) -> float:
+        return self._angle
+
+    def _set_angle(self, a: float) -> None:
+        self._angle = a
+        self.update()
+
+    from PySide6.QtCore import Property as _Property
+    angle = _Property(float, _get_angle, _set_angle)          # animated by the wiggle
+
+    def wiggle(self) -> None:
+        self._anim.stop()
+        self._anim.start()
+
+    def enterEvent(self, e) -> None:
+        self.wiggle()
+        super().enterEvent(e)
+
+    def set_count(self, n: int) -> None:
+        self.count = n
+        if n:
+            self.wiggle()
+        self.update()
+
+    def paintEvent(self, _e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.translate(self.width() / 2, self.height() / 2)
+        p.rotate(self._angle)
+        f = QFont("Segoe UI Emoji")
+        f.setPixelSize(23)
+        p.setFont(f)
+        p.drawText(QRectF(-16, -16, 32, 32), Qt.AlignmentFlag.AlignCenter, "📎")
+        p.resetTransform()
+        if self.count:
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(theme.ACCENT))
+            p.drawEllipse(QRectF(self.width() - 16, 1, 15, 15))
+            p.setPen(QColor("white"))
+            f.setFamily("Segoe UI")
+            f.setPixelSize(10)
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(QRectF(self.width() - 16, 1, 15, 15), Qt.AlignmentFlag.AlignCenter, str(self.count))
+        p.end()
+
+
 class ChatPanel(GlassPanel):
     prompt_sent = Signal(str)
+    added = Signal(str, str)              # (who, text): every message shown, for the session (ui/sessions.py)
+    action = Signal(str)                  # "new_session" | "clear" from the ＋ menu
 
     def __init__(self, accent: str, parent=None, badge: str | None = None):
         super().__init__(parent=parent)
         self.accent, self.badge = accent, badge
+        self.attachments: list[Path] = []
+        self._sending: list[Path] = []
+        self.replaying = False            # showing a saved session: don't save it again
+        self.pick_files = lambda: QFileDialog.getOpenFileNames(self, "Attach files")[0]
+        self.pick_folder = lambda: QFileDialog.getExistingDirectory(self, "Attach a folder") or None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 14, 16, 14)
         self.scroll = QScrollArea()
@@ -388,17 +459,34 @@ class ChatPanel(GlassPanel):
         box.setObjectName("glassAccent")
         box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         box.setStyleSheet(f"QFrame#glassAccent {{ background: {theme.BG1}; border: 1px solid {theme.ACCENT}; border-radius: 16px; }}")
-        row = QHBoxLayout(box)
-        row.setContentsMargins(10, 8, 10, 8)
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(10, 6, 10, 8)
+        outer.setSpacing(4)
+        self.chips_box = QWidget()                              # the attached files, each with ×
+        self.chips = FlowLayout(spacing=6)
+        self.chips_box.setLayout(self.chips)
+        self.chips_box.hide()
+        outer.addWidget(self.chips_box)
+        row = QHBoxLayout()
+        outer.addLayout(row)
         plus = QPushButton("+")
         plus.setFixedSize(34, 34)
+        plus.setToolTip("Attach files or a folder, new session, clear chat")
         plus.setStyleSheet("border-radius: 17px; font-size: 18px; padding: 0;")
+        self.plus_menu = QMenu(self)
+        self.plus_menu.addAction("📎  Attach files…", self.attach_files)
+        self.plus_menu.addAction("🗂  Attach a folder…", self.attach_folder)
+        self.plus_menu.addSeparator()
+        self.plus_menu.addAction("🆕  New session", lambda: self.action.emit("new_session"))
+        self.plus_menu.addAction("🧹  Clear chat…", lambda: self.action.emit("clear"))
+        plus.clicked.connect(lambda: self.plus_menu.popup(plus.mapToGlobal(plus.rect().topLeft()) - QPoint(0, self.plus_menu.sizeHint().height())))
+        self.plus = plus
         self.input = QLineEdit()
         self.input.setPlaceholderText("Type your prompt here… (steers this bot while it works)")
         self.input.setStyleSheet("QLineEdit { background: transparent; border: none; font-size: 14px; }")
-        clip = QToolButton()
-        clip.setText("📎")
-        clip.setStyleSheet("QToolButton { border: none; font-size: 16px; }")
+        clip = AttachButton()
+        clip.clicked.connect(self.attach_files)
+        self.clip = clip
         send = QPushButton("➤")
         send.setObjectName("primary")
         send.setFixedSize(40, 40)
@@ -410,14 +498,76 @@ class ChatPanel(GlassPanel):
         row.setStretch(1, 1)
         return box
 
+    # ── attachments ────────────────────────────────────────────────────
+    def attach_files(self) -> None:
+        for p in self.pick_files() or []:
+            self.attach(Path(p))
+
+    def attach_folder(self) -> None:
+        p = self.pick_folder()
+        if p:
+            self.attach(Path(p))
+
+    def attach(self, path: Path) -> None:
+        path = Path(path)
+        if path.exists() and path not in self.attachments:
+            self.attachments.append(path)
+            self._refresh_chips()
+
+    def _refresh_chips(self) -> None:
+        while self.chips.count():
+            item = self.chips.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+        for p in self.attachments:
+            b = QPushButton(("🗂 " if p.is_dir() else "📄 ") + p.name + "   ✕")
+            b.setObjectName("chip")
+            b.setToolTip(f"{p}\n(click to remove)")
+            b.clicked.connect(lambda _=False, p=p: self.detach(p))
+            self.chips.addWidget(b)
+        self.chips_box.setVisible(bool(self.attachments))
+        self.clip.set_count(len(self.attachments))
+
+    def detach(self, path: Path) -> None:
+        self.attachments = [p for p in self.attachments if p != path]
+        self._refresh_chips()
+
+    def take_attachments(self) -> list[Path]:
+        """The files sent with the message being sent right now (LiveUI copies them for the bots)."""
+        return list(self._sending)
+
     def _send(self) -> None:
         text = self.input.text().strip()
-        if text:
-            self.add(ChatMessage("user", text))
-            self.input.clear()
-            self.prompt_sent.emit(text)
+        if not text and not self.attachments:
+            return
+        self._sending = list(self.attachments)
+        names = ", ".join(p.name for p in self._sending)
+        shown = (text or "(see the attached files)") + (f"\n📎 {names}" if names else "")
+        self.add(ChatMessage("user", shown))
+        self.input.clear()
+        self.prompt_sent.emit(text or "Please look at the attached files.")
+        self._sending, self.attachments = [], []
+        self._refresh_chips()
+
+    def clear(self) -> None:
+        """Remove every message from the view."""
+        while self.col.count() > 1:                          # the last item is the stretch
+            item = self.col.takeAt(0)
+            lay = item.layout() if item else None
+            if lay is not None:
+                while lay.count():
+                    it = lay.takeAt(0)
+                    if it.widget():
+                        it.widget().setParent(None)             # gone from the view right away
+                        it.widget().deleteLater()
+                lay.deleteLater()
+            elif item and item.widget():
+                item.widget().setParent(None)
+                item.widget().deleteLater()
 
     def add(self, m: ChatMessage) -> None:
+        if not self.replaying:
+            self.added.emit(m.who, m.text)
         row = QHBoxLayout()
         row.setSpacing(12)
         bubble = QFrame()
@@ -462,6 +612,79 @@ class ChatPanel(GlassPanel):
             you.setStyleSheet(f"font-size: 20px; color: {theme.TEXT_DIM};")
             row.addWidget(you, 0, Qt.AlignmentFlag.AlignTop)
         self.col.insertLayout(self.col.count() - 1, row)
+
+    def add_approval(self, info: dict, on_decide) -> "ApprovalCard":
+        """A bot is waiting for your OK (A11.e.01): a card in its chat with Approve / Deny."""
+        card = ApprovalCard(info, on_decide)
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        face = QLabel()
+        face.setPixmap(mini_face(self.accent, mood="surprised", px=52, badge=self.badge))
+        face.setAlignment(Qt.AlignmentFlag.AlignTop)
+        row.addWidget(face, 0, Qt.AlignmentFlag.AlignTop)
+        row.addWidget(card, 1)
+        row.addSpacing(60)
+        self.col.insertLayout(self.col.count() - 1, row)
+        return card
+
+
+class ApprovalCard(QFrame):
+    """What the bot wants to do, why it asks (destructive / money / a secret place), and the buttons.
+    Decided elsewhere (tray, pipe) → mark_decided() updates it."""
+
+    def __init__(self, info: dict, on_decide, parent=None):
+        super().__init__(parent)
+        self.info, self.on_decide, self.decided = info, on_decide, None
+        self.setObjectName("approval")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        money = info.get("risk") == "R4"
+        edge = theme.AMBER if money else theme.RED
+        self.setStyleSheet(f"QFrame#approval {{ background: {theme.BG2}; border: 1px solid {edge}; border-radius: 14px; }}")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(16, 12, 16, 12)
+        v.setSpacing(8)
+        why = {"R4": "costs money", "R5": "can't be undone"}.get(str(info.get("risk")), "needs your OK")
+        head = QLabel(f"⚠  Needs your OK: <b>{info.get('tool')}</b> ({info.get('risk')}, {why})")
+        head.setStyleSheet(f"color: {edge}; font-size: 14px; background: transparent;")
+        v.addWidget(head)
+        body = QLabel(str(info.get("summary") or "") + (f"<br><span style='color:{theme.TEXT_DIM}'>on {info.get('host')}</span>"
+                                                          if info.get("host") else ""))
+        body.setWordWrap(True)
+        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        body.setStyleSheet("font-size: 14px; background: transparent;")
+        v.addWidget(body)
+        if info.get("rehearsal"):
+            import json as _json
+            details = QLabel(_json.dumps(info["rehearsal"], indent=1, ensure_ascii=False)[:600])
+            details.setWordWrap(True)
+            details.setStyleSheet(f"color: {theme.TEXT_DIM}; font-family: Consolas, monospace; font-size: 12px; background: transparent;")
+            v.addWidget(details)
+        row = QHBoxLayout()
+        self.approve = QPushButton("✔  Approve")
+        self.deny = QPushButton("✖  Deny")
+        self.approve.setStyleSheet(f"QPushButton {{ background: {theme.GREEN}; color: #04140b; border-radius: 10px; padding: 6px 16px; font-weight: 600; }}")
+        self.deny.setStyleSheet(f"QPushButton {{ background: {theme.BG3}; border: 1px solid {theme.BORDER}; border-radius: 10px; padding: 6px 16px; }}")
+        self.approve.clicked.connect(lambda: self._choose(True))
+        self.deny.clicked.connect(lambda: self._choose(False))
+        row.addWidget(self.approve)
+        row.addWidget(self.deny)
+        row.addStretch(1)
+        self.state = QLabel("")
+        self.state.setStyleSheet("background: transparent;")
+        row.addWidget(self.state)
+        v.addLayout(row)
+
+    def _choose(self, ok: bool) -> None:
+        if self.decided is None:
+            self.on_decide(self.info["id"], ok)
+            self.mark_decided(ok)
+
+    def mark_decided(self, ok: bool, by: str = "") -> None:
+        self.decided = ok
+        self.approve.setEnabled(False)
+        self.deny.setEnabled(False)
+        col = theme.GREEN if ok else theme.TEXT_DIM
+        self.state.setText(f"<span style='color:{col}'>{'✔ Approved' if ok else '✖ Denied'}{(' ' + by) if by else ''}</span>")
 
 
 class FlowLayout(QLayout):
@@ -602,6 +825,12 @@ class ElidedLabel(QLabel):
 
 # ── file explorer ───────────────────────────────────────────────────────────
 class FilesPanel(GlassPanel):
+    """The File Explorer (A11.k.01, A11.m): the project's files, live. Double-click opens a file in
+    the editor; right-click asks the window for its file menu (the window owns the actions)."""
+
+    file_opened = Signal(str)
+    context_menu = Signal(object)                      # a QPoint in tree-viewport coordinates
+
     def __init__(self, root: Path, parent=None):
         super().__init__(parent=parent)
         lay = QVBoxLayout(self)
@@ -625,18 +854,46 @@ class FilesPanel(GlassPanel):
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(18)
         self.tree.setAnimated(True)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self.context_menu.emit)
+        self.tree.doubleClicked.connect(self._double_clicked)
         lay.addWidget(self.tree, 1)
         self.root = Path(root)
+        self.working = False
 
-    def set_root(self, root: Path) -> None:
-        """Show another folder (e.g. the project a new goal works in)."""
-        if Path(root) == self.root:
-            return
+    def set_root(self, root: Path, *, working: bool | None = None) -> None:
+        """Show another folder (e.g. the project a new goal works in). working=True marks the folder
+        the user opened for the bots to work in (📌)."""
+        if working is not None:
+            self.working = working
         self.root = Path(root)
         self.model.setRootPath(str(root))
         self.tree.setRootIndex(self.model.index(str(root)))
-        self.path_label.setText(f"🗀  {root}")
-        self.path_label.setToolTip(str(root))
+        self.path_label.setText(("📌  " if self.working else "🗀  ") + str(root))
+        self.path_label.setToolTip(str(root) + ("\nThe bots work in this folder (File → Open folder)." if self.working else ""))
+
+    def _double_clicked(self, index) -> None:
+        p = Path(self.model.filePath(index))
+        if p.is_file():
+            self.file_opened.emit(str(p))
+
+    def selected_paths(self) -> list[Path]:
+        rows = {self.model.filePath(i) for i in self.tree.selectionModel().selectedRows(0)}
+        return [Path(r) for r in sorted(rows)]
+
+    def target_folder(self) -> Path:
+        """Where New file / New folder / Paste go: the selected folder, a selected file's folder, or the root."""
+        sel = self.selected_paths()
+        if sel:
+            return sel[0] if sel[0].is_dir() else sel[0].parent
+        return self.root
+
+    def select(self, path: Path) -> None:
+        idx = self.model.index(str(path))
+        if idx.isValid():
+            self.tree.setCurrentIndex(idx)
+            self.tree.scrollTo(idx)
 
 
 # ── team strip ──────────────────────────────────────────────────────────────

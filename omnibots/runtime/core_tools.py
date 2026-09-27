@@ -25,8 +25,37 @@ def _inside(ctx: ToolContext, path: Path) -> bool:
     return path.is_relative_to(ctx.workspace.resolve())
 
 
+SENSITIVE = (".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".omni", ".omnibots", ".git-credentials", ".netrc",
+             ".npmrc", ".pypirc", "AppData/Roaming/Microsoft/Credentials", "AppData/Local/Microsoft/Credentials",
+             "AppData/Local/Google/Chrome/User Data", "AppData/Local/Microsoft/Edge/User Data",
+             "AppData/Roaming/Mozilla/Firefox/Profiles", "AppData/Roaming/Microsoft/Protect")
+
+
+def _sensitive(path: Path) -> bool:
+    """Places a bot has no business reading: keys, tokens, password stores, browser profiles, .env files."""
+    p = path.as_posix().lower()
+    home = Path.home().as_posix().lower()
+    if path.name.lower().startswith(".env"):
+        return True
+    return any(p == f"{home}/{s.lower()}" or p.startswith(f"{home}/{s.lower()}/") for s in SENSITIVE)
+
+
 def _outside_is_r3(args: dict[str, Any], ctx: ToolContext) -> str:
-    return "R0" if _inside(ctx, _resolve(ctx, args.get("path", "."))) else "R3"
+    """Reading/listing: inside the project R0; outside R3 (runs without asking under the user's policy);
+    secret places (keys, password stores, browser profiles, .env outside the project) R5 = ask first."""
+    path = _resolve(ctx, args.get("path", "."))
+    if _inside(ctx, path):
+        return "R0"
+    return "R5" if _sensitive(path) else "R3"
+
+
+def _write_risk(args: dict[str, Any], ctx: ToolContext) -> str:
+    """Writing: inside the project R0 (the tool's base class applies); outside, a NEW file is R3, but
+    overwriting an existing file (or anything in a secret place) is destructive: R5 = ask first."""
+    path = _resolve(ctx, args.get("path", "."))
+    if _inside(ctx, path):
+        return "R0"
+    return "R5" if (path.exists() or _sensitive(path)) else "R3"
 
 
 def _rel(ctx: ToolContext, path: Path) -> str:
@@ -47,9 +76,20 @@ async def read_file(args: dict[str, Any], ctx: ToolContext) -> str:
     return f"{_rel(ctx, path)} ({len(lines)} lines)\n{body}"
 
 
+NEWLINE_EXT = {".html", ".htm", ".css", ".scss", ".less", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".vue", ".py", ".md",
+               ".json", ".yml", ".yaml", ".toml", ".xml", ".svg", ".sh", ".ps1", ".bat", ".sql", ".java", ".c", ".h", ".cpp",
+               ".hpp", ".cs", ".go", ".rs", ".rb", ".php", ".lua", ".nim", ".kt", ".swift", ".csv", ".ini", ".cfg"}
+
+
 async def write_file(args: dict[str, Any], ctx: ToolContext) -> str:
     path = _resolve(ctx, args["path"])
     content = str(args.get("content", ""))
+    # code/markup files end with a newline, like any editor saves them (live 2026-09-26: models send content
+    # without one, then the team spun up 2 extra bots just to append it). Never for .txt/extensionless files or
+    # anything holding a secret (a token followed by a newline can break a login); exact=true keeps the bytes.
+    if (content and not content.endswith("\n") and not args.get("exact") and path.suffix.lower() in NEWLINE_EXT
+            and "{{secret:" not in content):
+        content += "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     existed = path.exists()
     path.write_text(content, encoding="utf-8", newline="")
@@ -117,7 +157,7 @@ def core_registry() -> ToolRegistry:
     reg.add(Tool(
         "write_file", "Create or overwrite a text file with the given content. Paths are relative to your workspace.",
         {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]},
-        "R1", write_file, classify=_outside_is_r3, rehearse=rehearse_write,
+        "R1", write_file, classify=_write_risk, rehearse=rehearse_write,
         summary=lambda a: f"write {a.get('path')} ({len(str(a.get('content', '')))} chars)"))
     reg.add(Tool(
         "list_dir", "List a directory. Paths are relative to your workspace.",

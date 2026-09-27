@@ -26,6 +26,7 @@ DONE = {"completed"}
 DEAD = {"failed", "cancelled"}
 ACTIVE = {"assigned", "running", "waiting_approval", "review"}
 RESUMABLE = {"paused", "interrupted", "blocked"}
+DEP_BLOCKED = "a dependency failed or was cancelled"
 
 
 class GraphError(ValueError):
@@ -103,6 +104,45 @@ class TaskGraph:
         await self.db.write("UPDATE jobs SET depends_on_json=? WHERE id=?", (json.dumps(deps), job_id))
         await self.refresh(job.project_id)
 
+    async def update(self, job_id: str, *, depends_on: list[str] | None = None, done_criteria: str | None = None,
+                     description: str | None = None) -> "Job":
+        """Re-plan one job that hasn't started (pending, ready or blocked): new dependencies (checked:
+        same project, no cycle) and/or criteria. A job blocked only by a dead dependency comes back
+        to pending, then ready once its new dependencies are done."""
+        j = await self.get(job_id)
+        if not j:
+            raise GraphError(f"no job {job_id}")
+        if j.status not in ("pending", "ready", "blocked"):
+            raise GraphError(f"{job_id} is {j.status}; only jobs that haven't started can be changed")
+        sets, args = [], []
+        if depends_on is not None:
+            deps = list(dict.fromkeys(depends_on))
+            for d in deps:
+                dep = await self.get(d)
+                if not dep or dep.project_id != j.project_id:
+                    raise GraphError(f"dependency {d} is not a job in this project")
+                if d == job_id or await self._reaches(d, job_id):
+                    raise GraphError(f"{job_id} → {d} would create a cycle")
+            sets.append("depends_on_json=?")
+            args.append(json.dumps(deps))
+        if done_criteria is not None:
+            sets.append("done_criteria=?")
+            args.append(done_criteria)
+        if description is not None:
+            sets.append("description=?")
+            args.append(description)
+        if sets:
+            await self.db.write(f"UPDATE jobs SET {', '.join(sets)} WHERE id=?", (*args, job_id))
+        j = await self.get(job_id)
+        if j.status == "blocked" and j.attempts == 0:         # blocked by a dependency, never run itself
+            await self._set(j, "pending", error=None)
+        await self.refresh(j.project_id)
+        return await self.get(job_id)
+
+    async def dependents(self, job_id: str) -> list["Job"]:
+        j = await self.get(job_id)
+        return [x for x in await self.jobs(j.project_id) if job_id in x.depends_on] if j else []
+
     async def _reaches(self, start: str, target: str) -> bool:
         """Does `start` (transitively) depend on `target`?"""
         seen, stack = set(), [start]
@@ -142,11 +182,17 @@ class TaskGraph:
             changed = False
             js = {j.id: j for j in await self.jobs(project_id)}
             for j in js.values():
+                dep_states = [js[d].status for d in j.depends_on if d in js]
+                if j.status == "blocked" and j.attempts == 0 and j.error_message == DEP_BLOCKED:
+                    # blocked only by a dependency, which was re-planned (update): back in line
+                    if not any(s in DEAD or s == "blocked" for s in dep_states):
+                        await self._set(j, "pending", error=None)
+                        changed = True
+                    continue
                 if j.status not in ("pending", "ready"):
                     continue
-                dep_states = [js[d].status for d in j.depends_on if d in js]
                 if any(s in DEAD or (s == "blocked") for s in dep_states):
-                    await self._set(j, "blocked", error="a dependency failed or was cancelled")
+                    await self._set(j, "blocked", error=DEP_BLOCKED)
                     changed = True
                 elif j.status == "pending" and all(s in DONE for s in dep_states):
                     await self._set(j, "ready")

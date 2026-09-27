@@ -45,10 +45,11 @@ def _git_dir(repo: Path) -> Path | None:
     return None
 
 
-def check_repo(repo: Path) -> None:
-    """Raise GitUnsafe if the repo's own config could make git run a command."""
-    g = _git_dir(repo)
-    if g is None:
+def check_repo(repo: Path, git_dir: Path | None = None) -> None:
+    """Raise GitUnsafe if the repo's own config could make git run a command.
+    With `git_dir` (a history folder kept outside the work tree), that folder's config is checked."""
+    g = git_dir if git_dir is not None else _git_dir(repo)
+    if g is None or not g.exists():
         return
     cfg = g / "config"
     if not cfg.exists():
@@ -71,9 +72,14 @@ def _env() -> dict[str, str]:
     return env
 
 
-def git(repo: Path, *args: str, timeout: float = 120, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    """Run git in `repo` with hooks off and a checked config. Raises GitUnsafe."""
-    check_repo(repo)
+def git(repo: Path, *args: str, timeout: float = 120, env_extra: dict[str, str] | None = None,
+        git_dir: Path | None = None) -> subprocess.CompletedProcess:
+    """Run git in `repo` with hooks off and a checked config. Raises GitUnsafe.
+    `git_dir`: keep the history in that folder instead of `repo/.git` (a folder the user opened:
+    their files, and any git repo of their own there, are never touched by OmniBots' commits)."""
+    check_repo(repo, git_dir)
+    if git_dir is not None:
+        args = ("--git-dir", str(git_dir), "--work-tree", str(repo), *args)
     _EMPTY_HOOKS.mkdir(exist_ok=True)
     cmd = ["git", "-c", f"core.hooksPath={_EMPTY_HOOKS.as_posix()}", "-c", "core.fsmonitor=false",
            "-c", "core.autocrlf=false", "-c", "protocol.ext.allow=never", "--no-pager", *args]

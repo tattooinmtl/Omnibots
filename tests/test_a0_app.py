@@ -75,6 +75,11 @@ def test_recovers_after_a_hard_crash(home):
 def test_second_launch_focuses_the_first_window(home):
     import win32gui
 
+    # an installed app: the output folder was chosen on the first start (A11.m.01), so no setup question
+    from omnibots.settings import DEFAULT_SETTINGS_TOML
+    home.mkdir(parents=True, exist_ok=True)
+    out = (home.parent / "output").as_posix()
+    (home / "settings.toml").write_text(DEFAULT_SETTINGS_TOML.replace('folder = ""', f'folder = "{out}"').replace("splash = true", "splash = false"), encoding="utf-8")
     first = run_app(wait=False)     # with the real window
     try:
         wait_until_listening()

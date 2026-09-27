@@ -13,11 +13,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap, QRadialGradient
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QSplitter, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtCore import QPoint, QPointF, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QKeySequence, QLinearGradient, QPainter, QPixmap, QRadialGradient
+from PySide6.QtWidgets import (
+    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QSplitter, QToolButton,
+    QTreeView, QVBoxLayout, QWidget,
+)
 
 from omnibots.ui import theme
+from omnibots.ui.files import EditorTabs, FileOps, ask_text, copy_to_clipboard
 from omnibots.ui.omi_face import render_face
 from omnibots.ui.props import job_for_role
 from omnibots.ui.widgets import BoardPanel, BotCard, ChatPanel, FilesPanel, IDCard, TeamStrip, TerminalPanel
@@ -63,8 +67,14 @@ class TitleBar(QWidget):
             b.setText(m)
             if m == "Settings":
                 b.clicked.connect(self._open_settings)
+            elif m == "About":
+                b.clicked.connect(self._open_about)
+            elif m in ("File", "Edit") and hasattr(window, "file_menu"):
+                b.setMenu(window.file_menu if m == "File" else window.edit_menu)
+                b.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             b.setStyleSheet(f"QToolButton {{ border: none; padding: 6px 12px; font-size: 14px; color: {theme.TEXT}; }}"
-                            f"QToolButton:hover {{ background: {theme.BG2}; border-radius: 8px; }}")
+                            f"QToolButton:hover {{ background: {theme.BG2}; border-radius: 8px; }}"
+                            f"QToolButton::menu-indicator {{ image: none; }}")
             row.addWidget(b)
         row.addStretch(1)
         for glyph, act in (("—", window.showMinimized), ("☐", self._toggle_max), ("✕", window.close)):
@@ -78,8 +88,12 @@ class TitleBar(QWidget):
 
     def _open_settings(self) -> None:
         from omnibots.ui.settings_window import SettingsWindow
-        self._settings = SettingsWindow(self.win)
+        self._settings = SettingsWindow(self.win, engine=getattr(self.win, "engine", None))
         self._settings.show()
+
+    def _open_about(self) -> None:
+        from omnibots.ui.about import open_about
+        self._about = open_about(self.win)
 
     def _toggle_max(self) -> None:
         self.win.showNormal() if self.win.isMaximized() else self.win.showMaximized()
@@ -103,6 +117,9 @@ class BotWindow(QMainWindow):
     """One bot's window. Closing it hides it (bots keep working; the tray reopens it)."""
 
     on_first_hide = None                                # the tray's "still running" hint, shown once
+    folder_opened = Signal(str)                         # File → Open folder: the bots work there (A11.m.03)
+    new_project = Signal()                              # File → New project: the next goal starts a fresh folder
+    session_action = Signal(str, str)                   # ("new" | "close" | "clear" | "reopen", session id)
 
     def __init__(self, card: BotCard, workspace: Path, team: list[tuple[str, str, str, str]] | None = None,
                  bot_id: str = "omi", computers=None, quit_on_close: bool = False):
@@ -111,6 +128,12 @@ class BotWindow(QMainWindow):
         self.computers = computers                      # runtime.computer_tools.ComputerClient (A10.f.05)
         self._computer_win = None
         self.bot_id = bot_id
+        self.engine = None                              # set by LiveUI (Settings → Folders uses it)
+        self.confirm = lambda title, text: QMessageBox.question(self, title, text) == QMessageBox.StandardButton.Yes
+        self.pick_folder = lambda start: QFileDialog.getExistingDirectory(self, "Open folder", str(start)) or None
+        self.pick_file = lambda start: QFileDialog.getOpenFileName(self, "Open file", str(start))[0] or None
+        self.recent_sessions = lambda: []                 # LiveUI sets it: [(id, label)] for File → Recent sessions
+        self._build_actions()
         self.setWindowTitle(f"OmniBots · {card.name}")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setStyleSheet(theme.stylesheet())
@@ -145,10 +168,14 @@ class BotWindow(QMainWindow):
         self.team_strip = TeamStrip(team or [], bot_id)
         center.addWidget(self.team_strip)
         self.chat = ChatPanel(card.accent, badge=job_for_role(card.role))
-        center.addWidget(self.chat, 1)
+        self.chat.action.connect(lambda a: self._clear_chat() if a == "clear" else self.session_action.emit("new", ""))
+        self.tabs = EditorTabs(self.chat)                # Chat first; opened files beside it (A11.m.04)
+        center.addWidget(self.tabs, 1)
 
         # right column: File Explorer on top, the Message Board below (user, 2026-09-26), resizable
         self.files = FilesPanel(workspace)
+        self.files.file_opened.connect(lambda p: self.open_file(Path(p)))
+        self.files.context_menu.connect(self._explorer_menu)
         self.board = BoardPanel(bot_id)
         right = QSplitter(Qt.Orientation.Vertical)
         right.setHandleWidth(12)
@@ -161,6 +188,179 @@ class BotWindow(QMainWindow):
         body.addWidget(right, 25)
         outer.addLayout(body, 1)
         self.setCentralWidget(root)
+
+    # ── File / Edit (A11.m.04-05) ─────────────────────────────────────────
+    def _build_actions(self) -> None:
+        def act(text, slot, keys=None):
+            a = QAction(text, self)
+            if keys:
+                a.setShortcut(QKeySequence(keys))
+                a.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+            a.triggered.connect(lambda _=False: self._safely(slot))
+            self.addAction(a)
+            return a
+        self.acts = {
+            "new_file": act("New file…", self.new_file, "Ctrl+N"),
+            "open_file": act("Open file…", self.open_file_dialog, "Ctrl+O"),
+            "new_project": act("New project  (the next goal gets a fresh folder)", self.new_project.emit, None),
+            "new_session": act("New session  (saves this chat to Recent sessions)", lambda: self.session_action.emit("new", ""),
+                               "Ctrl+Shift+T"),
+            "close_session": act("Close session", lambda: self.session_action.emit("close", ""), None),
+            "clear_chat": act("Clear chat…", self._clear_chat, None),
+            "open_folder": act("Open folder…  (the bots work there)", self.open_folder_dialog, "Ctrl+Shift+O"),
+            "new_folder": act("Create folder…", self.new_folder, "Ctrl+Shift+N"),
+            "save": act("Save", self.save, "Ctrl+S"),
+            "save_as": act("Save as…", lambda: self.save(save_as=True), "Ctrl+Shift+S"),
+            "close_tab": act("Close tab", self.close_tab, "Ctrl+W"),
+            "undo": act("Undo", lambda: self._text("undo"), None),
+            "redo": act("Redo", lambda: self._text("redo"), None),
+            "cut": act("Cut", lambda: self._edit("cut"), None),
+            "copy": act("Copy", lambda: self._edit("copy"), None),
+            "paste": act("Paste", lambda: self._edit("paste"), None),
+            "find": act("Find…", self.find, "Ctrl+F"),
+            "rename": act("Rename…", self.rename, "F2"),
+            "delete": act("Delete  (to the Recycle Bin)", self.delete, "Delete"),
+            "duplicate": act("Duplicate", self.duplicate, "Ctrl+D"),
+            "copy_path": act("Copy path", self.copy_path, None),
+            "reveal": act("Show in Windows Explorer", self.reveal, None),
+        }
+        self.acts["delete"].setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.file_menu = QMenu(self)
+        for k in ("new_session", "close_session", None):
+            self.file_menu.addSeparator() if k is None else self.file_menu.addAction(self.acts[k])
+        self.recent_menu = self.file_menu.addMenu("Recent sessions")
+        self.file_menu.addSeparator()
+        for k in ("new_project", None, "new_file", "open_file", "open_folder", "new_folder", None, "save", "save_as", None,
+                  "close_tab"):
+            self.file_menu.addSeparator() if k is None else self.file_menu.addAction(self.acts[k])
+        self.file_menu.aboutToShow.connect(self._fill_recent)
+        self.edit_menu = QMenu(self)
+        for k in ("undo", "redo", None, "cut", "copy", "paste", None, "find", None, "rename", "duplicate", "delete", None,
+                  "copy_path", "reveal", None, "clear_chat"):
+            self.edit_menu.addSeparator() if k is None else self.edit_menu.addAction(self.acts[k])
+
+    def _fill_recent(self) -> None:
+        self.recent_menu.clear()
+        items = list(self.recent_sessions() or [])
+        for sid, label in items:
+            self.recent_menu.addAction(label, lambda sid=sid: self.session_action.emit("reopen", sid))
+        if not items:
+            a = self.recent_menu.addAction("(no closed sessions yet)")
+            a.setEnabled(False)
+
+    def _clear_chat(self) -> None:
+        if self.confirm("Clear chat?", "Remove every message in this session? (To keep them, use File → New session instead.)"):
+            self.session_action.emit("clear", "")
+
+    def _safely(self, fn) -> None:
+        try:
+            fn()
+        except Exception as exc:                        # a file problem is a message, never a crash
+            QMessageBox.warning(self, "OmniBots", str(exc))
+
+    def _focus_in_text(self) -> QPlainTextEdit | None:
+        w = QApplication.focusWidget()
+        return w if isinstance(w, QPlainTextEdit) else None
+
+    def _text(self, op: str) -> None:
+        ed = self._focus_in_text() or (self.tabs.current_editor().text if self.tabs.current_editor() else None)
+        if ed is not None:
+            getattr(ed, op)()
+
+    def _edit(self, op: str) -> None:
+        """Cut/Copy/Paste: text in the editor, files in the explorer."""
+        ed = self._focus_in_text()
+        if ed is not None or not isinstance(QApplication.focusWidget(), QTreeView):
+            if ed is not None:
+                getattr(ed, op)()
+            return
+        if op == "paste":
+            for p in FileOps.paste(self.files.target_folder()):
+                self.files.select(p)
+        else:
+            FileOps.copy(self.files.selected_paths(), cut=(op == "cut"))
+
+    def open_file(self, path: Path) -> None:
+        self._safely(lambda: self.tabs.open_file(path))
+
+    def open_file_dialog(self) -> None:
+        p = self.pick_file(self.files.target_folder())
+        if p:
+            self.open_file(Path(p))
+
+    def open_folder_dialog(self) -> None:
+        p = self.pick_folder(self.files.root)
+        if p:
+            self.open_folder(Path(p))
+
+    def open_folder(self, folder: Path) -> None:
+        """Load a folder into the explorer; the bots work there from the next goal on (A11.m.03)."""
+        self.files.set_root(folder, working=True)
+        self.folder_opened.emit(str(folder))
+
+    def new_file(self) -> None:
+        name = ask_text(self, "New file", "File name:", "notes.md")
+        if name:
+            p = FileOps.new_file(self.files.target_folder(), name)
+            self.files.select(p)
+            self.open_file(p)
+
+    def new_folder(self) -> None:
+        name = ask_text(self, "Create folder", "Folder name:", "new folder")
+        if name:
+            self.files.select(FileOps.new_folder(self.files.target_folder(), name))
+
+    def save(self, save_as: bool = False) -> None:
+        self.tabs.save(save_as=save_as)
+
+    def close_tab(self) -> None:
+        if self.tabs.current_editor():
+            self.tabs.close_tab(self.tabs.currentIndex())
+
+    def find(self) -> None:
+        if self.tabs.current_editor():
+            self.tabs.current_editor().show_find()
+
+    def rename(self) -> None:
+        sel = self.files.selected_paths()
+        if len(sel) != 1:
+            return
+        name = ask_text(self, "Rename", "New name:", sel[0].name)
+        if name and name != sel[0].name:
+            new = FileOps.rename(sel[0], name)
+            self.tabs.path_renamed(sel[0], new)
+            self.files.select(new)
+
+    def delete(self) -> None:
+        sel = self.files.selected_paths()
+        if not sel:
+            return
+        what = sel[0].name if len(sel) == 1 else f"{len(sel)} items"
+        if self.confirm("Delete?", f"Move {what} to the Recycle Bin? (You can restore it from there.)"):
+            for ed in self.tabs.editors():
+                if ed.path and any(ed.path == p or p in ed.path.parents for p in sel):
+                    ed.text and ed.text.document().setModified(False)
+                    self.tabs.close_tab(self.tabs.indexOf(ed))
+            FileOps.to_recycle_bin(sel)
+
+    def duplicate(self) -> None:
+        for p in self.files.selected_paths():
+            self.files.select(FileOps.duplicate(p))
+
+    def copy_path(self) -> None:
+        sel = self.files.selected_paths() or [self.files.root]
+        copy_to_clipboard("\n".join(str(p) for p in sel))
+
+    def reveal(self) -> None:
+        FileOps.reveal((self.files.selected_paths() or [self.files.root])[0])
+
+    def _explorer_menu(self, pos) -> None:
+        m = QMenu(self)
+        for k in ("open_file", "new_file", "new_folder", None, "cut", "copy", "paste", "duplicate", "rename", "delete", None,
+                  "copy_path", "reveal", None, "open_folder"):
+            m.addSeparator() if k is None else m.addAction(self.acts[k])
+        self.files.tree.setFocus()
+        m.popup(self.files.tree.viewport().mapToGlobal(pos))
 
     def open_computer(self) -> None:
         """🖥 Open computer: the bot's live screen from the server."""
@@ -189,6 +389,9 @@ class BotWindow(QMainWindow):
             _force_foreground(int(self.winId()))
 
     def closeEvent(self, e) -> None:
+        if self.quit_on_close and not self.tabs.close_all():   # quitting: unsaved files ask first (hiding keeps them)
+            e.ignore()
+            return
         if self.quit_on_close:                                # no system tray: closing the main window quits
             e.accept()
             from PySide6.QtWidgets import QApplication

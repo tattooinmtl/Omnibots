@@ -92,9 +92,9 @@ def test_a_bot_stuck_in_a_loop_is_warned_then_stopped(tmp_path):
         with MockProviders() as mock:
             e = await build(tmp_path, mock)
             bot = await e["reg"].create("Loopy", "writer", chain=["work/m"], tools=list(DEFAULT_TOOLS))
-            same = sse("", tool_calls=[call("write_file", path="hello.md", content="Hello!")])
+            same = sse("", tool_calls=[call("write_file", path="hello.txt", content="Hello!")])
             mock.script("work", *[same] * 8)
-            out = await e["runner"].run(bot.id, "write hello.md ending with a newline")
+            out = await e["runner"].run(bot.id, "write hello.txt ending with a newline")
             reqs = [r for r in mock.requests if r["provider"] == "work"]
             job = await e["db"].read_one("SELECT status, error_message FROM jobs WHERE id=?", (out.job_id,))
             await e["db"].close()

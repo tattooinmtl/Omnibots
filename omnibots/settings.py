@@ -15,6 +15,13 @@ DEFAULT_SETTINGS_TOML = """\
 
 [app]
 log_level = "INFO"
+# The launch intro (7 s, follows the real startup; click or Esc skips it).
+splash = true
+
+[output]
+# Where the bots' projects go: one folder per goal, named "<date> <goal words>" (PLAN.md A11.m.01).
+# Empty = not chosen yet: the app asks on its next start.
+folder = ""
 
 [omni]
 # Leave empty to auto-detect (%OMNI_HOME%, then ~/.omni).
@@ -35,6 +42,17 @@ require_approval_for_new_bots = false
 # Time budget for one goal, and when a silent bot counts as stalled.
 goal_minutes = 30
 stall_minutes = 5
+
+[skills]
+# Extra skill libraries the bots can use (on top of Omni's skills and ~/.omnibots/skills).
+# Every SKILL.md below these folders counts; folders starting with "." (archives) are skipped.
+folders = ["C:/.skills/skills"]
+
+[approvals]
+# Which actions wait for your click (PLAN.md §3). "R4" (default): only destructive actions
+# (deleting, overwriting outside the project, force-push, registry/firewall, secret places)
+# and money. "R3": also installs, pushes, network commands, browser clicks, outside-folder access.
+ask_from = "R4"
 
 [budgets]
 # PLAN.md A9.c.02. Token caps: 0 = no cap (providers' own quotas still apply).
@@ -60,6 +78,28 @@ def _merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
     for k, v in over.items():
         out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
     return out
+
+
+def save_setting(path: Path, section: str, key: str, value: str) -> None:
+    """Set one string value in settings.toml, keeping the user's other lines and comments."""
+    import json
+    import re
+    text = path.read_text(encoding="utf-8") if path.exists() else DEFAULT_SETTINGS_TOML
+    line = f"{key} = {json.dumps(value)}"                     # a JSON string is a valid TOML basic string
+    head = re.search(rf"(?m)^\[{re.escape(section)}\]\s*$", text)
+    if head is None:
+        text = text.rstrip("\n") + f"\n\n[{section}]\n{line}\n"
+    else:
+        nxt = re.search(r"(?m)^\[", text[head.end():])
+        end = head.end() + (nxt.start() if nxt else len(text) - head.end())
+        body = text[head.end():end]
+        if re.search(rf"(?m)^{re.escape(key)}\s*=", body):
+            body = re.sub(rf"(?m)^{re.escape(key)}\s*=.*$", lambda _m: line, body, count=1)
+        else:
+            body = "\n" + line + body if not body.startswith("\n") else "\n" + line + body
+        text = text[:head.end()] + body + text[end:]
+    path.write_text(text, encoding="utf-8")
+    tomllib.loads(text)                                         # never leave a broken file behind
 
 
 def load_settings(path: Path) -> dict[str, Any]:

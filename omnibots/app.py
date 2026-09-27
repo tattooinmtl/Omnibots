@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import json
 import time
 import logging
@@ -73,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(reply))
         return OK if reply.get("ok") else 1
 
+    output = settings["output"]["folder"]                      # A11.m.01 ("" = not chosen yet: asked below)
     # ── single instance ────────────────────────────────────────────────
     window = None
     live = None
@@ -86,6 +88,9 @@ def main(argv: list[str] | None = None) -> int:
         orchestrator_settings=settings.get("orchestrator", {}),
         mcp_risk=settings.get("mcp_risk", {}),
         budgets=settings.get("budgets", {}),
+        output_dir=output or None,
+        approvals_ask_from=str(settings.get("approvals", {}).get("ask_from", "R4")),
+        skill_folders=list(settings.get("skills", {}).get("folders", [])),
     )
 
     def cmd_show(_msg):
@@ -215,10 +220,47 @@ def main(argv: list[str] | None = None) -> int:
 
     log.info("OmniBots %s starting (home=%s)", __version__, paths.home)
 
+    # ── A11.m.01: where the bots' projects go, asked once on the first real start ──
+    # (headless and timed test runs never ask; their projects stay inside their own home)
+    if not output and not args.no_window and args.exit_after <= 0:
+        from omnibots.settings import save_setting
+        from omnibots.ui.setup_dialog import ask_output_folder
+        output = str(ask_output_folder())
+        save_setting(paths.settings_file, "output", "folder", output)
+        engine.set_output_dir(Path(output))
+
     # ── engine + window ────────────────────────────────────────────────
+    splash = None
+    if not args.no_window and args.exit_after <= 0 and settings["app"].get("splash", True):
+        # the launch intro, synced to the real startup (ui/splash.py)
+        from PySide6.QtCore import QEventLoop
+
+        from omnibots.ui.splash import Splash
+        splash = Splash()
+        engine.signals.startup_stage.connect(splash.set_stage)
+        splash.start()
     try:
-        engine.start()
+        if splash is None:
+            engine.start()
+        else:
+            engine.begin()
+            waiting = QEventLoop()
+            poll = QTimer()
+            started_at = time.monotonic()
+
+            def check():
+                if engine.started or time.monotonic() - started_at > 30:
+                    poll.stop()
+                    err = getattr(engine, "_start_error", None)
+                    splash.set_ready(None if engine.started and not err else f"OmniBots failed to start: {err or 'timed out'}")
+            poll.timeout.connect(check)
+            poll.start(50)
+            splash.finished.connect(waiting.quit)
+            waiting.exec()
+            engine.wait_started(0.1)                        # raises the startup error, if any
     except Exception as exc:
+        if splash is not None:
+            splash.close()
         log.exception("startup failed")
         print(f"OmniBots failed to start: {exc}", file=sys.stderr)
         instance.release()
@@ -230,6 +272,11 @@ def main(argv: list[str] | None = None) -> int:
 
         live = LiveUI(engine)
         window = live.open_bot("omi")
+        from omnibots.ui.stall_watch import StallWatch
+        stall_watch = StallWatch(paths.logs / "ui-stalls.log")   # a frozen window leaves its stack in the log
+        if splash is not None:
+            splash.close()                                  # Omi's window takes over from the intro
+            window.bring_to_front()
 
         # A11.b.01: the tray is the control center; closing a window only hides it
         from PySide6.QtWidgets import QSystemTrayIcon

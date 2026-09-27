@@ -67,6 +67,7 @@ def icon_state(s: dict[str, Any]) -> tuple[str, int | None]:
 
 class Tray(QObject):
     finished = Signal(str, str)          # (title, text) from the engine thread → a notification
+    _snap = Signal(object, object)       # (snapshot, then) from the engine thread
 
     def __init__(self, engine, live, *, confirm: Callable[[str, str], bool] | None = None,
                  open_settings: Callable[[], None] | None = None, quit_app: Callable[[], None] | None = None):
@@ -74,7 +75,7 @@ class Tray(QObject):
         self.engine, self.live = engine, live
         self.confirm = confirm or self._ask
         self.open_settings = open_settings or self._settings
-        self.quit_app = quit_app or (lambda: QApplication.instance().quit())
+        self.quit_app = quit_app or self._exit
         self.snapshot: dict[str, Any] = {}
         self._faces: dict[tuple[str, str], QIcon] = {}
         self._icon_key: tuple | None = None
@@ -87,6 +88,7 @@ class Tray(QObject):
         self.icon.setContextMenu(self.menu)
         self.icon.activated.connect(self._activated)
         self.finished.connect(self._on_finished)
+        self._snap.connect(lambda s, then: then(s))
         # a single click waits one double-click interval, so a double-click doesn't also pop the menu
         self._click = QTimer(self)
         self._click.setSingleShot(True)
@@ -101,19 +103,40 @@ class Tray(QObject):
         if sig is not None:
             sig.bot_event.connect(lambda ev: ev.get("kind") == "state" and self._soon.start())
             sig.board_message.connect(lambda _m: self._soon.start())
-            sig.alert.connect(lambda _a: self._soon.start())
+            sig.alert.connect(self._on_alert)
+
+    def _on_alert(self, a: dict[str, Any]) -> None:
+        self._soon.start()
+        if a.get("kind") == "approval_request" and QSystemTrayIcon.supportsMessages() and self.icon.isVisible():
+            self.icon.showMessage(f"{a.get('bot_id')} needs your OK", f"{a.get('tool')}: {str(a.get('summary') or '')[:120]}",
+                                  omi_icon("approval", 1), 8000)
 
     def show(self) -> None:
         self.refresh_icon()
         self.icon.show()
 
     # ── engine ─────────────────────────────────────────────────────────
-    def fetch(self) -> dict[str, Any]:
+    def fetch(self, wait: float = 0.5) -> dict[str, Any]:
+        """For the menu: a fresh snapshot, but never wait long (a busy engine → the last snapshot)."""
         try:
-            self.snapshot = self.engine.submit(self.engine.ui_tray()).result(timeout=3)
+            self.snapshot = self.engine.submit(self.engine.ui_tray()).result(timeout=wait)
         except Exception:
-            log.exception("tray snapshot failed")
+            log.info("tray snapshot not ready in %.1fs; showing the last one", wait)
         return self.snapshot
+
+    def fetch_later(self, then) -> None:
+        """For the icon: ask without waiting; `then(snapshot)` runs on the UI thread."""
+        try:
+            fut = self.engine.submit(self.engine.ui_tray())
+        except Exception:
+            return
+
+        def done(f):
+            try:
+                self._snap.emit(f.result(), then)
+            except Exception:
+                pass
+        fut.add_done_callback(done)
 
     def _later(self, coro, title: str, describe: Callable[[Any], str]) -> None:
         """Run on the engine thread; report back as a notification (the menu doesn't wait)."""
@@ -133,7 +156,10 @@ class Tray(QObject):
 
     # ── the icon ───────────────────────────────────────────────────────
     def refresh_icon(self) -> None:
-        s = self.fetch()
+        self.fetch_later(self._apply_icon)             # never freeze the UI for the icon
+
+    def _apply_icon(self, s: dict[str, Any]) -> None:
+        self.snapshot = s
         key = icon_state(s)
         if key != self._icon_key:
             self._icon_key = key
@@ -219,6 +245,7 @@ class Tray(QObject):
 
         m.addSeparator()                                        # ── settings and configuration
         self._act(m, "Settings…", self.open_settings)
+        self._act(m, "About OmniBots…", self.about)
         for text in ("Bot configurations…", "Provider config…", "Tools pool…", "Skills pool…", "Playbooks…",
                      "Routines and triggers…", "Parameters and orchestrator…"):
             self._act(m, text, tip=SOON.format("A11.a.01"))
@@ -300,6 +327,20 @@ class Tray(QObject):
             self._later(self.engine.approvals.decide(a["id"], pick == "approve", "user via tray"),
                         "Approved" if pick == "approve" else "Denied", lambda ok: f"{a.get('tool')} for {a.get('bot_id')}")
         return pick
+
+    def _exit(self) -> None:
+        """Exit: unsaved files in any bot window ask first (Save / Discard / Cancel)."""
+        for w in list(getattr(self.live, "windows", {}).values()):
+            tabs = getattr(w, "tabs", None)
+            if tabs is not None and any(ed.dirty for ed in tabs.editors()):
+                w.bring_to_front()
+                if not tabs.close_all():
+                    return
+        QApplication.instance().quit()
+
+    def about(self) -> None:
+        from omnibots.ui.about import open_about
+        self._about_win = open_about()
 
     def _settings(self) -> None:
         from omnibots.ui.settings_window import SettingsWindow

@@ -42,12 +42,16 @@ Your job: MONITOR the work, INQUIRE the right bot, RELAY what it needs (CORAL hu
 How you run a goal:
 1. plan_goal: the Planner turns the goal into jobs with done-criteria. If it comes back with a question, ask_user it.
 2. list_team, then for each ready job pick an idle bot with the right skills. Only if none fits, create_bot
+   (find_skills first and give the new bot the skills that fit its job: it loads them before it starts)
    (lane "minimax" for hard reasoning/coding/research, "cheap" for simple writing or formatting). Reuse bots.
 3. assign_job for each ready job (several at once when they don't depend on each other).
 4. wait_for_mention to hear back. Workers send claims with evidence and a finish notice.
 5. Check every claim against the job's done-criteria: accept_claim if the evidence really proves it,
    reject_claim with concrete new instructions if it's partial, off-target or measures the wrong thing.
    When a job is accepted, assign the jobs it unblocked.
+   If a job can't work as planned (it keeps failing, or its criteria are wrong), fix the PLAN: cancel_job it, add_job a
+   replacement, and update_job its dependents to need the replacement (or fix a job's criteria with update_job).
+   Never invent placeholder jobs.
 6. Use council for vendor/architecture choices, spending, or anything R3+ (assign_job refuses R3+ jobs without one).
 7. When every job is accepted, review_work on the project. If it needs fixes, add_job a follow-up and assign it
    (a worker whose job is over no longer reads messages). Then submit a short final result for the user.
@@ -56,6 +60,24 @@ Never do the workers' jobs yourself. Keep messages short and concrete. Ask the u
 LESSON_PROMPT = """You extract lessons from a finished job for the bot's memory.
 Reply with 0 to 3 short, concrete, reusable lessons as '- ' bullets (things to do or avoid next time).
 If there is nothing worth remembering, reply exactly: NONE"""
+
+
+async def _within_budget(agent, coro, limit: float, t0: float):
+    """Like asyncio.wait_for, but time the bot spends waiting on the user doesn't count."""
+    run = asyncio.ensure_future(coro)
+    try:
+        while True:
+            used = time.monotonic() - t0 - agent.held_seconds()
+            done, _ = await asyncio.wait({run}, timeout=max(0.05, min(5.0, limit - used)))
+            if done:
+                return run.result()
+            if time.monotonic() - t0 - agent.held_seconds() >= limit:
+                run.cancel()
+                await asyncio.wait({run}, timeout=15)
+                raise asyncio.TimeoutError
+    except asyncio.CancelledError:
+        run.cancel()
+        raise
 
 
 @dataclass
@@ -102,6 +124,13 @@ class JobRunner:
         parts = [base, today_line()]
         if prof.description:
             parts.append(f"Your job description: {prof.description}")
+        if prof.skills and not prof.is_boss:
+            # the skills Omi gave this bot: named up front, so it loads them (they're never pasted in whole)
+            lines = []
+            for name in prof.skills:
+                s = self.skill_pool.get(name) if self.skill_pool is not None else None
+                lines.append(f"- {name}: {(s.description if s else '')[:160]}")
+            parts.append("Your skills (invoke_skill each one that fits before you start):\n" + "\n".join(lines))
         profile = user_profile_text(self.home)
         if profile:
             parts.append("What you know about the user (shared by the whole team):\n" + profile)
@@ -208,6 +237,31 @@ class JobRunner:
                     rehearse=rehearse_profile)
 
     # ── running a job ──────────────────────────────────────────────────
+    MAX_SKILLS, SKILL_CHARS = 3, 6000
+
+    def _with_skills(self, prof: BotProfile, task: str) -> str:
+        """The skills Omi gave this bot, loaded INTO the job (live 2026-09-26: a cheap-lane worker was told to
+        invoke_skill and didn't). Up to 3, each trimmed; the rest stay reachable with invoke_skill."""
+        if prof.is_boss or not prof.skills or self.skill_pool is None:
+            return task
+        from omnibots.omni.frontmatter import parse_frontmatter
+        blocks = []
+        for name in prof.skills[: self.MAX_SKILLS]:
+            s = self.skill_pool.get(name)
+            if not s:
+                continue
+            try:
+                _, body = parse_frontmatter(Path(s.path).read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                continue
+            body = body.strip()
+            if len(body) > self.SKILL_CHARS:
+                body = body[: self.SKILL_CHARS] + f"\n… (trimmed; invoke_skill('{s.name}') for the rest)"
+            blocks.append(f"### Skill: {s.name}\n{body}")
+        if not blocks:
+            return task
+        return task + "\n\n--- Your skills for this job (follow them) ---\n\n" + "\n\n".join(blocks)
+
     async def run(self, bot_id: str, task: str, *, title: str | None = None, job_id: str | None = None,
                   project_id: str | None = None, workspace: Path | None = None, chain: list[str] | None = None,
                   budget: dict[str, Any] | None = None, extra_tools: list[Tool] | None = None,
@@ -255,13 +309,14 @@ class JobRunner:
         pump = asyncio.create_task(steering_pump(self.bus, agent)) if self.bus else None
         if self.keep_awake:
             self.keep_awake.acquire()
+        task = self._with_skills(prof, task)                   # assigned skills come loaded
         t0 = time.monotonic()
         result: TurnResult | None = None
         status = "failed"
         time_error = None
         try:
             if budget.get("seconds"):
-                result = await asyncio.wait_for(agent.run(task, job_id=job_id), float(budget["seconds"]))
+                result = await _within_budget(agent, agent.run(task, job_id=job_id), float(budget["seconds"]), t0)
             else:
                 result = await agent.run(task, job_id=job_id)
             status = _job_status(result.status)

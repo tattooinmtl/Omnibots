@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from omnibots.ui import theme
 from omnibots.ui.props import action_for_tool
@@ -48,8 +48,13 @@ NOISE = {"SEAT_GRANTED", "SEAT_RELEASED"}                    # too chatty for th
 
 
 class LiveUI(QObject):
+    # an engine answer, delivered on the UI thread: (then, result, error)
+    _delivered = Signal(object, object, object)
+
     def __init__(self, engine, *, window_factory=None, taunts: Taunts | None = None):
         super().__init__()
+        self._delivered.connect(lambda then, r, e: then(r, e) if then else None)
+        self._refreshing = False
         self.engine = engine
         self.windows: dict[str, Any] = {}
         self.bots: dict[str, dict[str, Any]] = {}
@@ -57,16 +62,23 @@ class LiveUI(QObject):
         self._last_quip: dict[str, float] = {}
         self._action: dict[str, str] = {}
         self._typed: set[tuple[str, str]] = set()                 # (bot, text) you typed in a window (no echo twice)
+        self.work_folder: Path | None = None                      # File → Open folder: new goals work there (A11.m.03)
+        self.fresh_next = False                                   # File → New project: the next goal gets a new folder
+        home = getattr(engine, "home", None)
+        from omnibots.ui.sessions import SessionStore
+        self.sessions = SessionStore(Path(home) / "sessions") if home else None    # chat sessions (ui/sessions.py)
         self.window_factory = window_factory or self._make_window
         if taunts is None:
             from omnibots.omni.personality import load
             root = getattr(getattr(getattr(engine, "omni", None), "location", None), "install_root", None)
             taunts = Taunts(load(Path(root) if root else None))
         self.taunts = taunts
+        self.cards: dict[str, list] = {}                         # approval id -> its cards (A11.e.01)
         sig = getattr(engine, "signals", None)
         if sig is not None:
             sig.bot_event.connect(self.on_bot_event)
             sig.board_message.connect(self.on_board_message)
+            sig.alert.connect(self.on_alert)
             from PySide6.QtCore import QTimer
             self._cards = QTimer(self)
             self._cards.timeout.connect(self.refresh_cards)
@@ -76,8 +88,38 @@ class LiveUI(QObject):
     def _run(self, coro, timeout: float = 10):
         return self.engine.submit(coro).result(timeout=timeout)
 
+    def _later(self, coro, then=None) -> None:
+        """Ask the engine WITHOUT waiting (live bug 2026-09-26: the window froze 7-10 s while the
+        engine was busy). `then(result, error)` runs on the UI thread when the answer arrives."""
+        try:
+            fut = self.engine.submit(coro)
+        except Exception as exc:
+            if then:
+                then(None, exc)
+            return
+
+        def done(f):
+            try:
+                r, e = f.result(), None
+            except BaseException as exc:
+                r, e = None, exc
+            self._delivered.emit(then, r, e)
+        fut.add_done_callback(done)
+
     def refresh_bots(self) -> None:
         self.bots = {b["id"]: b for b in self._run(self.engine.ui_bots())}
+
+    def refresh_bots_later(self, then=None) -> None:
+        """Refresh the bot list in the background; `then()` runs after it (skipped if it failed)."""
+        def got(bots, err):
+            if err is None and bots is not None:
+                self.bots = {b["id"]: b for b in bots}
+                if then:
+                    try:
+                        then()
+                    except Exception:
+                        log.exception("after the bot refresh")
+        self._later(self.engine.ui_bots(), got)
 
     def name_of(self, bot_id: str | None) -> tuple[str, str]:
         if not bot_id:
@@ -85,12 +127,13 @@ class LiveUI(QObject):
         if bot_id == "user":
             return ("You", "user")
         b = self.bots.get(bot_id)
-        if b is None and bot_id not in ("system", "reviewer"):
-            try:
-                self.refresh_bots()
-            except Exception:
-                pass
-            b = self.bots.get(bot_id)
+        if b is None and bot_id not in ("system", "reviewer") and not self._refreshing:
+            self._refreshing = True                      # a new bot: learn its name in the background
+
+            def done():
+                self._refreshing = False
+            self.refresh_bots_later(done)
+            QTimer.singleShot(3000, done)
         return (b["name"], b["role"]) if b else (bot_id.capitalize(), "system")
 
     # ── windows ───────────────────────────────────────────────────────────
@@ -117,6 +160,16 @@ class LiveUI(QObject):
             raise KeyError(f"no bot {bot_id}")
         w = self.window_factory(bot, self.team())
         self.windows[bot_id] = w
+        if hasattr(w, "folder_opened"):
+            w.engine = self.engine
+            w.folder_opened.connect(self.set_work_folder)
+            w.new_project.connect(self.start_new_project)
+            w.session_action.connect(lambda action, sid, b=bot_id: self.on_session(b, action, sid))
+            if self.sessions is not None:
+                w.recent_sessions = lambda b=bot_id: [(s.id, s.label) for s in self.sessions.recent(b)]
+        current = self.sessions.current(bot_id) if self.sessions is not None else None
+        if self.sessions is not None and hasattr(w.chat, "added"):
+            w.chat.added.connect(lambda who, text, b=bot_id: self._save_chat(b, who, text))
         w.chat.prompt_sent.connect(lambda text, b=bot_id: self.on_prompt(b, text))
         if getattr(w, "team_strip", None) is not None:
             w.team_strip.bot_chosen.connect(self.open_bot)
@@ -129,14 +182,147 @@ class LiveUI(QObject):
                 if m.get("type") in NOISE:
                     continue
                 self._board_into(w, m)
-                self._chat_from(bot_id, w, m)
+                if current is None:                               # no saved session yet: rebuild the chat from the board
+                    self._chat_from(bot_id, w, m)
         except Exception:
             log.exception("could not load history for %s", bot_id)
+        if current is not None:
+            self._replay(w, current)
         for b in self.bots.values():
             w.board.set_activity(b["id"], b["name"], b["role"], "working" if b.get("active") else "idle",
                                  "working…" if b.get("active") else "idle")
+        # approvals already waiting (asked before this window opened) show up too
+        approvals = getattr(self.engine, "approvals", None)
+        for a in (approvals.list_pending() if approvals is not None else []):
+            if a.get("bot_id") == bot_id or bot_id == "omi":
+                self.cards.setdefault(str(a["id"]), []).append(w.chat.add_approval(a, self.decide))
         w.show()
         return w
+
+    # ── chat sessions (File → New/Close session, Recent sessions; Edit → Clear chat) ──
+    def _save_chat(self, bot: str, who: str, text: str) -> None:
+        w = self.windows.get(bot)
+        folder = str(w.files.root) if w is not None and getattr(w, "files", None) is not None else ""
+        try:
+            self.sessions.append(bot, who, text, folder)
+        except OSError:
+            log.exception("could not save the chat session")
+
+    def _replay(self, w, s) -> None:
+        w.chat.replaying = True
+        try:
+            for m in s.messages:
+                w.chat.add(ChatMessage(m.get("who", "bot"), m.get("text", "")))
+        finally:
+            w.chat.replaying = False
+
+    def on_session(self, bot: str, action: str, sid: str = "") -> None:
+        w = self.windows.get(bot)
+        if w is None or self.sessions is None:
+            return
+        if action in ("new", "close"):
+            closed = self.sessions.close(bot)
+            w.chat.clear()
+            w.chat.replaying = True                      # a note for you, not part of the new session
+            w.chat.add(ChatMessage("bot", "🆕 New session." + (f" The last one is in File → Recent sessions (\"{closed.title[:40]}\")."
+                                                               if closed else "")))
+            w.chat.replaying = False
+        elif action == "clear":
+            self.sessions.clear(bot)
+            w.chat.clear()
+        elif action == "reopen":
+            s = self.sessions.reopen(sid)
+            if s is None:
+                return
+            w.chat.clear()
+            self._replay(w, s)
+            if s.folder and Path(s.folder).is_dir() and bot == "omi":
+                self.work_folder, self.fresh_next = Path(s.folder), False     # back in that session's project
+                w.files.set_root(Path(s.folder), working=True)
+
+    def _attach(self, bot: str, w, text: str) -> str:
+        """Files you attached: copied into the project's attachments/ folder (every bot and the sandbox can open
+        them); with no project folder yet, their full paths are given instead."""
+        files = w.chat.take_attachments() if w is not None and hasattr(w.chat, "take_attachments") else []
+        if not files:
+            return text
+        target = self.goal_folder() if bot == "omi" else (Path(w.files.root) if getattr(w, "files", None) else None)
+        names = []
+        if target is not None and target.is_dir():
+            import shutil
+            from omnibots.ui.files import FileOps
+            dest = target / "attachments"
+            dest.mkdir(exist_ok=True)
+            for p in files:
+                to = FileOps.free_name(dest, p.name)
+                try:
+                    (shutil.copytree if p.is_dir() else shutil.copy2)(p, to)
+                    names.append(f"attachments/{to.name}")
+                except OSError as exc:
+                    names.append(f"{p} (couldn't copy: {exc.strerror or exc})")
+            return text + "\n\nAttached (copied into the project's attachments/ folder): " + ", ".join(names)
+        return text + "\n\nAttached files (full paths): " + ", ".join(str(p) for p in files)
+
+    def start_new_project(self) -> None:
+        self.work_folder, self.fresh_next = None, True
+        omi = self.windows.get("omi")
+        out = getattr(self.engine, "output_dir", None)
+        if omi is not None:
+            if out and Path(out).is_dir():
+                omi.files.set_root(Path(out), working=False)
+            omi.chat.add(ChatMessage("bot", "🆕 Fresh start: my next goal gets its own new project folder."))
+
+    def goal_folder(self) -> Path | None:
+        """Where Omi's next goal works: the folder you opened, else the project his File Explorer shows
+        (so "add a css to the index.html" continues the website), else a new folder."""
+        if self.fresh_next:
+            return None
+        if self.work_folder:
+            return self.work_folder
+        omi = self.windows.get("omi")
+        root = Path(omi.files.root) if omi is not None else None
+        out = getattr(self.engine, "output_dir", None)
+        projects = getattr(self.engine, "projects", None)
+        if root and root.is_dir() and not (out and root == Path(out)) and projects is not None and projects.is_ours(root):
+            return root
+        return None
+
+    def set_work_folder(self, folder: str) -> None:
+        """The user opened a folder: Omi's next goal is created in it (the bots work there)."""
+        self.work_folder, self.fresh_next = Path(folder), False
+        omi = self.windows.get("omi")
+        if omi is not None:
+            omi.files.set_root(self.work_folder, working=True)
+            omi.chat.add(ChatMessage("bot", f"📌 Got it: my next goal works in {self.work_folder}. "
+                                            "(Your files stay yours: I keep my change history outside that folder.)"))
+
+    # ── approvals you can see (A11.e.01) ──────────────────────────────────
+    def on_alert(self, a: dict[str, Any]) -> None:
+        if a.get("kind") == "approval_request":
+            self.show_approval(a)
+        elif a.get("kind") == "approval_decision":
+            for card in self.cards.pop(str(a.get("id")), []):
+                if card.decided is None:
+                    card.mark_decided(bool(a.get("approved")), "(elsewhere)")
+
+    def show_approval(self, a: dict[str, Any]) -> None:
+        """A card in the asking bot's chat, and in Omi's (the window you're most likely looking at)."""
+        aid = str(a.get("id"))
+        if aid in self.cards:
+            return
+        targets = [b for b in dict.fromkeys((a.get("bot_id"), "omi")) if b in self.windows]
+        cards = []
+        for b in targets:
+            cards.append(self.windows[b].chat.add_approval(a, self.decide))
+            self.windows[b].face.set_action("waiting")
+        self.cards[aid] = cards
+
+    def decide(self, aid: str, ok: bool) -> None:
+        for card in self.cards.get(aid, []):
+            if card.decided is None:
+                card.mark_decided(ok)
+        self.cards.pop(aid, None)
+        self._later(self.engine.approvals.decide(aid, ok, "user via the chat card"))
 
     def team(self) -> list[tuple[str, str, str, str]]:
         return [(b["id"], b["name"], b["role"], "working" if b.get("active") else "happy") for b in self.bots.values()]
@@ -145,11 +331,10 @@ class LiveUI(QObject):
         """Seat, model and usage change while bots work; keep the ID cards and team strips current."""
         if not self.windows:
             return
-        try:
-            before = set(self.bots)
-            self.refresh_bots()
-        except Exception:
-            return
+        before = set(self.bots)
+        self.refresh_bots_later(lambda: self._apply_cards(before))
+
+    def _apply_cards(self, before: set[str]) -> None:
         for bid, w in self.windows.items():
             b = self.bots.get(bid)
             if b is None:
@@ -279,36 +464,45 @@ class LiveUI(QObject):
             self._typed.discard((target, text))                     # typed in that window: already shown there
         # a new goal: Omi's file explorer follows the project it works in
         if m.get("type") == "TASK_RECEIVED" and "omi" in self.windows and m.get("project_id"):
-            try:
-                self.refresh_bots()
-                self.windows["omi"].files.set_root(Path(self.bots["omi"]["workspace"]))
-            except Exception:
-                log.exception("could not switch Omi's files")
+            def omi_files():
+                root = Path(self.bots["omi"]["workspace"])
+                self.windows["omi"].files.set_root(root, working=bool(self.work_folder and root == self.work_folder))
+            self.refresh_bots_later(omi_files)
+        # a worker got a job: its explorer follows that job's project (A11.m.02)
+        rec = m.get("recipient_id")
+        if m.get("type") == "TASK_ASSIGNED" and rec in self.windows and rec != "omi":
+            self.refresh_bots_later(lambda: self.windows[rec].files.set_root(Path(self.bots[rec]["workspace"])))
         if m.get("type") == "BOT_CREATED":                        # a new clone joined: show it in the team strips
-            try:
-                self.refresh_bots()
+            def strips():
                 for w in self.windows.values():
                     w.team_strip.set_team(self.team())
-            except Exception:
-                log.exception("team refresh failed")
+            self.refresh_bots_later(strips)
 
     # ── you → bots ────────────────────────────────────────────────────────
     def on_prompt(self, bot: str, text: str) -> None:
         w = self.windows.get(bot)
+        text = self._attach(bot, w, text)
         self._typed.add((bot, text))
         active = bot in getattr(getattr(self.engine, "runner", None), "active", {})
-        try:
-            if active:
-                how = self._run(self.engine.steer(bot, text))
-                # an answer to the bot's own question: its real reply follows, no canned note
-                note = None if how == "answer" else "Got it. I'll read this before my next step."
-            elif bot == "omi":
-                pid = self._run(self.engine.start_goal(text))
-                note = f"On it! Planning this as a new goal ({pid}). Watch the board for the team's progress."
-            else:
-                self._run(self.engine.tell(bot, text))
-                note = "I'm not working right now; your message is on the board for my next job. (Ask Omi to start new work.)"
-        except Exception as exc:
-            note = f"✖ couldn't deliver that: {exc}"
-        if w is not None and note:
-            w.chat.add(ChatMessage("bot", note))
+
+        def reply(note_for):
+            def then(result, err):
+                note = f"✖ couldn't deliver that: {err}" if err else note_for(result)
+                if w is not None and note:
+                    w.chat.add(ChatMessage("bot", note))
+            return then
+        # never wait here: the window keeps drawing; the note comes when the engine answers
+        if active:
+            # an answer to the bot's own question: its real reply follows, no canned note
+            self._later(self.engine.steer(bot, text),
+                        reply(lambda how: None if how == "answer" else "Got it. I'll read this before my next step."))
+        elif bot == "omi":
+            folder = self.goal_folder()
+            self.fresh_next = False
+            info = {"folder": str(folder)} if folder else {}
+            where = f" in {folder.name}" if folder else " in a new project folder"
+            self._later(self.engine.start_goal(text, info),
+                        reply(lambda pid: f"On it! Working on this{where} ({pid}). Watch the board for the team's progress."))
+        else:
+            self._later(self.engine.tell(bot, text), reply(
+                lambda _r: "I'm not working right now; your message is on the board for my next job. (Ask Omi to start new work.)"))

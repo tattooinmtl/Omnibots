@@ -48,7 +48,7 @@ class FakeEngine:
     async def steer(self, bot, text):
         self.calls.append(("steer", bot, text))
 
-    async def start_goal(self, text):
+    async def start_goal(self, text, info=None):
         self.calls.append(("goal", text))
         return "proj_1"
 
@@ -161,3 +161,61 @@ def test_your_chat_steers_starts_goals_or_messages(tmp_path):
     wc.chat._send()
     assert eng.calls == [("steer", "coder", "use pytest, not unittest"), ("goal", "build me a landing page"),
                          ("tell", "coder", "later: add dark mode")]
+
+
+def test_a_busy_engine_never_freezes_the_window(tmp_path):
+    """Live bug (user, 2026-09-26): pressing Enter froze the app 7-10 s. The window used to WAIT for
+    the engine (sends, board updates, card refreshes). Now it asks and keeps drawing."""
+    import threading
+
+    class SlowEngine(FakeEngine):
+        def submit(self, coro):
+            f = concurrent.futures.Future()
+
+            def later():
+                import time as _t
+                _t.sleep(2.0)                                       # the engine is busy
+                f.set_result(asyncio.run(coro))
+            threading.Thread(target=later, daemon=True).start()
+            return f
+
+    eng = FakeEngine(tmp_path)
+    live = LiveUI(eng, taunts=Taunts(load(None), seed=4))
+    w = live.open_bot("omi")                                        # opened while the engine was quick
+    slow = SlowEngine(tmp_path)
+    slow.calls = eng.calls
+    live.engine = slow
+    import time
+    t0 = time.monotonic()
+    w.chat.input.setText("build me a landing page")
+    w.chat._send()                                                  # Enter
+    live.refresh_cards()                                            # the 5 s card timer
+    live.on_board_message({"id": 50, "sender_id": "omi", "sender_type": "bot", "recipient_id": None, "type": "BOT_CREATED",
+                           "payload": {"bot_id": "newbie"}, "created_at": "2026-09-26T10:00:00Z"})
+    assert time.monotonic() - t0 < 0.3, "the window waited for the engine"
+    labels = lambda: [l.text() for l in w.chat.findChildren(type(w.card.name))]
+    assert not any("On it!" in t for t in labels())                 # not answered yet…
+    end = time.monotonic() + 6
+    while time.monotonic() < end and not any("On it!" in t for t in labels()):
+        app.processEvents()
+        time.sleep(0.02)
+    assert any("On it!" in t for t in labels()) and eng.calls == [("goal", "build me a landing page")]   # …then it is
+
+
+def test_the_stall_watch_logs_where_the_window_froze(tmp_path):
+    import time
+    from omnibots.ui.stall_watch import StallWatch
+    log = tmp_path / "ui-stalls.log"
+    sw = StallWatch(log, limit=0.4)
+    for _ in range(5):
+        app.processEvents()
+        time.sleep(0.05)
+    assert not log.exists()                                         # beating: nothing to report
+
+    def stuck_here():
+        time.sleep(1.2)                                             # a freeze on the UI thread
+    stuck_here()
+    time.sleep(0.3)
+    sw.stop()
+    text = log.read_text(encoding="utf-8")
+    assert "froze for over" in text and "stuck_here" in text and sw.stalls == 1

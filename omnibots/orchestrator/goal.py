@@ -56,7 +56,13 @@ class Orchestrator:
         kit = BossToolkit(ctx=ctx, db=self.db, bus=self.bus, inbox=inbox, registry=self.registry, runner=self.runner,
                           graph=self.graph, projects=self.projects, ledger=self.ledger, factory=self.factory,
                           router=self.router, skills=self.skills(), planner_chain=self.planner_chain, playbooks=self.playbooks)
-        task_text = (RESUME_NOTE + "\n\n" if resume else "") + f"GOAL from the user:\n{goal}\n\nProject: {pid}. Run it with your tools, then submit."
+        existing = [p.name for p in ctx.folder.iterdir() if p.name not in ("GOAL.md", ".git")] if ctx.folder.is_dir() else []
+        here = (f"\n\nYou're working in an EXISTING folder ({ctx.folder}) that already has: {', '.join(sorted(existing)[:25])}. "
+                "This goal continues that work: look at those files first (list_dir / read_file) and build on them."
+                if existing and not resume else "")
+        task_text = ((RESUME_NOTE + "\n\n" if resume else "") + f"GOAL from the user:\n{goal}{here}\n\n"
+                     f"Project id: {pid} (a label for your tools, NOT a folder name). Your current folder IS the project "
+                     f"folder ({ctx.folder}); files go at its top level. Run it with your tools, then submit.")
         try:
             out = await self.runner.run(BOSS_ID, task_text, title=boss_job.title, job_id=boss_job.id, project_id=pid,
                                         workspace=ctx.folder, extra_tools=kit.tools(), inbox=inbox,
@@ -68,6 +74,7 @@ class Orchestrator:
         if live:
             await asyncio.wait(live, timeout=self.grace_seconds)
         await self._stop_leftover_workers(ctx)
+        await self._resumable_if_out_of_time(pid, boss_job.id, goal)
         report = await self.write_report(pid, out)
         await self.projects.set_status(pid, "done" if out.status == "completed" else "failed" if out.status == "failed" else "open")
         if out.status == "completed":
@@ -75,6 +82,22 @@ class Orchestrator:
         if self.playbooks is not None and out.status in ("completed", "failed", "blocked"):
             await self.retrospect(pid, ctx, out, report)
         return {"project_id": pid, "status": out.status, "report": report, "boss_answer": (out.result.answer if out.result else "")}
+
+    async def _resumable_if_out_of_time(self, pid: str, boss_job_id: str, goal: str) -> bool:
+        """Live bug 2026-09-26: the goal hit its time limit, stayed `blocked`, and its planned jobs were never
+        done (▶ Start only resumes interrupted work). Out of time → interrupted + tell the user what's left."""
+        row = await self.db.read_one("SELECT status, error_message FROM jobs WHERE id=?", (boss_job_id,))
+        if not row or row["status"] != "blocked" or "time budget" not in (row["error_message"] or ""):
+            return False
+        await self.db.write("UPDATE jobs SET status='interrupted' WHERE id=?", (boss_job_id,))
+        left = [j for j in await self.graph.jobs(pid) if j.status in ("pending", "ready", "blocked", "assigned", "running")
+                and not j.title.startswith("[goal]")]
+        todo = "; ".join(j.title for j in left[:6]) or "checking and finishing up"
+        await self.bus.publish(topic_project(pid), "QUESTION",
+                               {"text": f"⏱ I ran out of my time on \"{goal.splitlines()[0][:80]}\" with {len(left)} job(s) left "
+                                        f"({todo}). Press ▶ Start in the tray to continue where I stopped."},
+                               sender_type="bot", sender_id=BOSS_ID, recipient_id="user", project_id=pid)
+        return True
 
     async def _close_unneeded_jobs(self, pid: str) -> list[str]:
         """A6.c.02: the goal passed review, so jobs Omi planned but routed around (never started)

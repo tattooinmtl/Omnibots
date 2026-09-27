@@ -163,6 +163,7 @@ class Triggers:
         self.poll, self.cooldown = poll_seconds, cooldown_seconds
         self._stamps: dict[str, Any] = {}
         self._last_fire: dict[str, float] = {}
+        self.board_ready = asyncio.Event()          # set once board_loop listens (messages before that aren't seen)
 
     async def add(self, name: str, kind: str, config: dict[str, Any], goal: str) -> str:
         if kind not in self.KINDS:
@@ -212,6 +213,7 @@ class Triggers:
 
     async def board_loop(self) -> None:
         sub = await self.bus.subscribe()                        # the firehose; filtered per trigger below
+        self.board_ready.set()
         try:
             while True:
                 m = await sub.get()

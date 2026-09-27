@@ -12,7 +12,8 @@ from omnibots.runtime.minimax_tools import minimax_tools
 from omnibots.runtime.skill_tools import SkillPool
 
 
-def runner_pools(config: Callable[[], Any], home: Path, router, locks=None, mcp_risk: dict[str, str] | None = None) -> dict[str, Any]:
+def runner_pools(config: Callable[[], Any], home: Path, router, locks=None, mcp_risk: dict[str, str] | None = None,
+                 skill_folders: list[str] | None = None) -> dict[str, Any]:
     """JobRunner keyword arguments: locks, skill_pool, media_tools, mcp. `config` returns
     the current OmniConfig (or None). Close `mcp` on shutdown."""
 
@@ -24,7 +25,8 @@ def runner_pools(config: Callable[[], Any], home: Path, router, locks=None, mcp_
     cfg = lambda: config()
     return {
         "locks": locks,
-        "skill_pool": SkillPool(lambda: (cfg().skills if cfg() else []), home / "skills"),
+        "skill_pool": SkillPool(lambda: (cfg().skills if cfg() else []), home / "skills",
+                                [Path(f) for f in (skill_folders or []) if f]),
         "media_tools": minimax_tools(lambda: (cfg().providers.get(MINIMAX) if cfg() else None), vision_chat=vision_chat),
         "mcp": MCPManager(lambda: (cfg().mcp_servers if cfg() else {}), mcp_risk),
     }

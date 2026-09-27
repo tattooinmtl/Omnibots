@@ -47,15 +47,22 @@ class Decision:
 
 
 class ApprovalCenter:
-    def __init__(self, db=None, on_event: Callable[[str, dict[str, Any]], Awaitable[None] | None] | None = None):
+    def __init__(self, db=None, on_event: Callable[[str, dict[str, Any]], Awaitable[None] | None] | None = None,
+                 ask_from: str = "R3"):
+        """ask_from: the lowest risk that waits for the user. The app uses settings [approvals]
+        ask_from = "R4" (user, 2026-09-26: only destructive actions and money ask; R3 runs)."""
+        if ask_from not in ("R3", "R4", "R5"):
+            raise ValueError("ask_from must be R3, R4 or R5 (R4 money always asks when R5 is chosen too)")
+        self.ask_from = ask_from
         self.db = db
         self.on_event = on_event
         self.pending: dict[str, tuple[asyncio.Future, dict[str, Any]]] = {}
         self.scopes: list[Scope] = []
 
-    @staticmethod
-    def needs_approval(risk: str) -> bool:
-        return RISK_ORDER.index(risk) >= RISK_ORDER.index("R3")
+    def needs_approval(self, risk: str) -> bool:
+        if risk == "R4":
+            return True                                  # money: always the user's click (standing rule)
+        return RISK_ORDER.index(risk) >= RISK_ORDER.index(self.ask_from)
 
     def pre_approve(self, scope: Scope) -> None:
         if scope.risk != "R3":

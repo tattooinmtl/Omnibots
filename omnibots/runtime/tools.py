@@ -56,6 +56,7 @@ class ToolContext:
     emit: Callable[[str, str], Awaitable[None]] | None = None   # (kind, content) -> bot_events
     sandbox: Any = None                               # runtime.sandbox.Sandbox
     runs: list[dict[str, Any]] = field(default_factory=list)   # commands really run in this job (A4.a.08)
+    waiting_on_user: Any = None                       # () -> context manager: the time budget stops meanwhile
 
     async def event(self, kind: str, content: str) -> None:
         if self.emit:

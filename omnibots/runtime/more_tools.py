@@ -24,6 +24,11 @@ MAX_HITS = 200
 
 # Port of Omni's BLOCKED_PATTERNS / elevated list (src/tools/index.mjs commandRisk).
 R5_PATTERNS = [
+    # deleting anything asks first (user, 2026-09-26: "only delete, rm, destructive commands ... should prompt")
+    (r"\bgit\s+push\b[^\n]*(\s--force(-with-lease)?\b|\s-f\b|\s\+\S)", "force-pushes (rewrites the remote's history)"),
+    (r"\bgit\s+branch\s+[^\n]*(-d|--delete)\b", "deletes a git branch"),
+    (r"\b(drop\s+(table|database|schema)|truncate\s+table)\b", "deletes database data"),
+    (r"\bmkfs\b", "formats a disk"),
     (r"\brm\s+(-[^\n]*r|--recursive)", "recursively deletes files"),
     (r"\bremove-item\b[^\n]*(\s-r|\s-recurse|recursive)", "recursively deletes files"),
     (r"\brmdir\b[^\n]*(/s|-r|--recursive)", "recursively deletes a directory"),
@@ -43,6 +48,11 @@ R5_PATTERNS = [
     (r"\bnetsh\s+advfirewall", "modifies Windows Firewall rules"),
     (r"\bnew-netfirewallrule\b", "adds a firewall rule"),
     (r"\bbcdedit\b", "modifies the boot configuration"),
+    # the general delete rules last, so a more precise reason above wins
+    (r"(^|[;&|(]|\bsudo|\bxargs|\bthen|\bdo)\s*(rm|del|erase|rmdir|rd|unlink|shred|ri)(\s|$)", "deletes files"),
+    (r"\bgit\s+rm\b", "deletes files"),
+    (r"\bfind\b[^\n]*\s-delete\b", "deletes files"),
+    (r"\bremove-item\b", "deletes files"),
 ]
 R3_PATTERNS = [
     (r"\bnpm\s+(install|i)\b", "installs packages"), (r"\bpnpm\s+(install|add)\b", "installs packages"),

@@ -11,8 +11,10 @@ Everything is narrated as bot events: console, terminal, thinking, state.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,6 +38,8 @@ MAX_PARSE_RECOVERIES = 3
 WORKER_PROMPT = """You are {name}, an OmniBots worker: a clone of Omi, specialised as a {role}.
 You work in your own workspace folder; relative paths in tools are resolved there.
 Work step by step with your tools. Run code with run_python (it runs in a sandbox), and check results before claiming success.
+SKILLS: the team has a library of expert instructions (skills). Before you start, call find_skill with a few words about the
+task (e.g. "css modern website", "python tests"); if one fits, invoke_skill it and follow it. Load the skills listed for you below first.
 Keep answers short and concrete. When the task is done, reply with a brief report of what you did and the evidence (file names, command output). Do not call a tool after you are finished.
 If the user sends a note while you work, follow it: it corrects your course."""
 
@@ -96,9 +100,29 @@ class BotAgent:
         self.tokens_used = 0
         self._go = asyncio.Event()               # A7.c.01: cleared = paused at the next step boundary
         self._go.set()
+        # time spent waiting on the user (approvals, questions, a pause) doesn't use the time budget
+        self._held, self._holds, self._hold_since = 0.0, 0, None
         # Waiting list (A4.b.01): a MiniMax-first bot books a seat for the whole job.
         self.seat_lease = seat_lease if seat_lease is not None else bool(chain) and chain[0].split("/")[0].split("::")[0] == MINIMAX
         self.seat = None
+
+    @contextlib.contextmanager
+    def waiting_on_user(self):
+        """While the bot waits for YOU, its time budget stops (live bug 2026-09-26: a goal 'failed' after
+        30 min parked on an approval nobody saw)."""
+        self._holds += 1
+        if self._holds == 1:
+            self._hold_since = time.monotonic()
+        try:
+            yield
+        finally:
+            self._holds -= 1
+            if self._holds == 0 and self._hold_since is not None:
+                self._held += time.monotonic() - self._hold_since
+                self._hold_since = None
+
+    def held_seconds(self) -> float:
+        return self._held + ((time.monotonic() - self._hold_since) if self._hold_since is not None else 0.0)
 
     # ── pause / resume (A7.c.01): take effect at the next step boundary ──
     def pause(self) -> None:
@@ -121,7 +145,8 @@ class BotAgent:
             self.seat = None
         await ev.set_state("sleeping", "paused by the user")
         await ev.emit("console", "⏸ paused")
-        await self._go.wait()
+        with self.waiting_on_user():
+            await self._go.wait()
         await ev.emit("console", "▶ resumed")
         if had_seat:
             await self._book_seat()
@@ -144,7 +169,8 @@ class BotAgent:
         goal = first_user_goal(msgs)
         schemas = self.tools.schemas()
         registry = build_param_registry(schemas)
-        ctx = ToolContext(bot_id=self.bot_id, workspace=self.workspace, job_id=job_id, emit=ev.emit, sandbox=self.sandbox)
+        ctx = ToolContext(bot_id=self.bot_id, workspace=self.workspace, job_id=job_id, emit=ev.emit, sandbox=self.sandbox,
+                          waiting_on_user=self.waiting_on_user)
         recoveries, nudged, total_calls, models = 0, False, 0, []
         last_step, repeats = None, 0                     # stuck-loop guard (A3.a.10)
         await ev.emit("console", f"▶ task: {task}")
@@ -333,9 +359,10 @@ class BotAgent:
                         continue
                 await ev.set_state("waiting_approval", summary)
                 await ev.emit("console", f"⏸ waiting for your approval ({risk}: {RISK_TEXT[risk]}): {summary}")
-                decision = await self.approvals.request(bot_id=self.bot_id, job_id=job_id, tool=name, risk=risk,
-                                                        summary=summary, timeout=self.approval_timeout,
-                                                        rehearsal=rehearsal, host=target_host(tool, frozen, ctx))
+                with self.waiting_on_user():
+                    decision = await self.approvals.request(bot_id=self.bot_id, job_id=job_id, tool=name, risk=risk,
+                                                            summary=summary, timeout=self.approval_timeout,
+                                                            rehearsal=rehearsal, host=target_host(tool, frozen, ctx))
                 if not decision.approved:
                     allowed[idx] = (f"DENIED: the user did not approve this {risk} action ({decision.reason or 'declined'}). "
                                     "Do not retry it; continue another way or report back.")

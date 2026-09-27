@@ -18,6 +18,7 @@ boss accepts its claim (ADR-12: proof-carrying results).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -65,7 +66,8 @@ class BossToolkit:
     def _job_task(self, job) -> str:
         parts = [job.description or job.title, f"\nDone when: {job.done_criteria}" if job.done_criteria else "",
                  f"\nGoal of the whole project: {self.c.goal}",
-                 "\nWork in the shared project folder (your workspace). When finished, submit_claim with evidence "
+                 "\nWork in the shared project folder: your CURRENT folder IS the project folder, so write files at its top "
+                 "level (index.html, not <project-id>/index.html) unless this job names a subfolder. When finished, submit_claim with evidence "
                  "(files you wrote, commands you ran with exit codes, url_quote for facts from the web), then give a short report."]
         if self.c.extra.get(job.id):
             parts.append(f"\nInstructions from Omi: {self.c.extra[job.id]}")
@@ -128,6 +130,39 @@ class BossToolkit:
         except Exception as exc:
             return f"ERROR: {exc}"
         return f"added {job.id} \"{job.title}\" [{job.status}]; assign_job it to an idle bot"
+
+    async def cancel_job(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        """A job that's no longer needed or can't work as planned: cancelled (its worker, if any, is stopped)."""
+        jid, reason = str(args.get("job_id") or ""), str(args.get("reason") or "").strip()
+        j = await self.graph.get(jid)
+        if not j or j.project_id != self.c.project_id:
+            return f"ERROR: no job {jid!r} in this project"
+        if not reason:
+            return "ERROR: cancel_job needs a reason"
+        task = self.c.worker_tasks.get(jid)
+        if task and not task.done():
+            task.cancel()
+            await asyncio.wait([task], timeout=15)
+        await self.graph.cancel(jid, f"cancelled by Omi: {reason}")
+        stuck = [d for d in await self.graph.dependents(jid) if d.status == "blocked"]
+        return (f"cancelled {jid} \"{j.title}\""
+                + (f". Now blocked because they needed it: {', '.join(d.id for d in stuck)}. Point them at the replacement "
+                   f"with update_job(depends_on=[...]) or cancel_job them." if stuck else ""))
+
+    async def update_job(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        """Re-plan a job that hasn't started: new depends_on (e.g. the replacement of a cancelled job) and/or criteria."""
+        jid = str(args.get("job_id") or "")
+        j = await self.graph.get(jid)
+        if not j or j.project_id != self.c.project_id:
+            return f"ERROR: no job {jid!r} in this project"
+        deps = args.get("depends_on")
+        try:
+            j = await self.graph.update(jid, depends_on=[d for d in deps if isinstance(d, str)] if isinstance(deps, list) else None,
+                                        done_criteria=(str(args["done_criteria"]).strip() or None) if args.get("done_criteria") else None,
+                                        description=str(args["description"]) if args.get("description") else None)
+        except Exception as exc:
+            return f"ERROR: {exc}"
+        return f"updated {j.id} [{j.status}] needs {','.join(j.depends_on) or '-'}; done when: {j.done_criteria}"
 
     async def _jobs_table(self) -> str:
         rows = []
@@ -278,7 +313,9 @@ class BossToolkit:
                                recipient_id="user", project_id=self.c.project_id)
         await ctx.event("state", "waiting_answer: " + q[:120])     # the chat now sends answers, not steers
         deferred, deadline = [], asyncio.get_running_loop().time() + timeout
+        hold = ctx.waiting_on_user() if ctx.waiting_on_user else contextlib.nullcontext()
         try:
+            hold.__enter__()                                  # waiting for the user: the time budget stops
             while True:
                 left = deadline - asyncio.get_running_loop().time()
                 if left <= 0:
@@ -290,6 +327,7 @@ class BossToolkit:
                     return f"The user answered: {m.text()}"
                 deferred.append(m)
         finally:
+            hold.__exit__(None, None, None)
             for m in deferred:                              # keep bot messages for wait_for_mention
                 self.inbox.sub.queue.put_nowait(m)
 
@@ -304,6 +342,12 @@ class BossToolkit:
             T("add_job", "Add a follow-up job to the plan (e.g. a correction after a review). Workers only act on assigned jobs.",
               {"title": s, "description": s, "done_criteria": s, "depends_on": {"type": "array", "items": s}, "risk": s},
               self.add_job, ["title", "done_criteria"]),
+            T("cancel_job", "Cancel a job that's no longer needed or can't work as planned (stops its worker). Says which jobs it leaves blocked.",
+              {"job_id": s, "reason": s}, self.cancel_job, ["job_id", "reason"], timeout=60),
+            T("update_job", "Re-plan a job that hasn't started: new depends_on (e.g. the replacement of a cancelled job) and/or "
+              "done_criteria/description. A job blocked by a dead dependency becomes runnable again.",
+              {"job_id": s, "depends_on": {"type": "array", "items": s}, "done_criteria": s, "description": s},
+              self.update_job, ["job_id"]),
             T("list_team", "The team: every bot's id, role, skills, tools, lane and whether it's idle or busy.", {}, self.list_team),
             T("find_skills", "Search the skill pool for a capability (returns skill names to give a new bot).", {"query": s}, self.find_skills, ["query"]),
             T("create_bot", f"Create a worker (Bot Factory, limited). tools from {sorted(KNOWN_TOOLS)}"
