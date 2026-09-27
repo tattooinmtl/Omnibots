@@ -8,9 +8,13 @@
 Protocol (one JSON object per line):
   -> {"cmd": "show"}              <- {"ok": true}
   -> {"cmd": "status"}            <- {"ok": true, "status": {...}}
-  -> {"cmd": "goal", "text": ...} <- {"ok": false, "error": "not implemented yet"} (until A7)
+  -> {"cmd": "goal", "text": ...} <- {"ok": true, "project_id": "..."}
   -> {"cmd": "stop"}              <- {"ok": true}
+(app.py registers the full list: tell, approvals, approve/deny, pause/resume, panic, budget, tray, ...)
 Phase B (the Omni plugin) uses this same channel.
+
+A handler that needs the engine returns a `Deferred` instead of waiting for it: the reply is
+written when the engine's future is done, so the window never freezes on a pipe command (A15.a.01).
 """
 
 from __future__ import annotations
@@ -21,10 +25,12 @@ import logging
 import os
 import re
 import sys
+from concurrent.futures import Future
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import QLockFile, QObject
+from PySide6.QtCore import QLockFile, QObject, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 log = logging.getLogger(__name__)
@@ -50,8 +56,13 @@ def allow_foreground_handoff() -> None:
         ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
 
 
-def send_command(cmd: dict[str, Any], *, name: str | None = None, timeout_ms: int = 3000) -> dict[str, Any] | None:
-    """Client side. Returns the reply, or None when no instance is listening."""
+REPLY_WAIT_MS = 65_000     # the longest server-side command (panic) may take 60 s
+
+
+def send_command(cmd: dict[str, Any], *, name: str | None = None, timeout_ms: int = 3000,
+                 reply_timeout_ms: int = REPLY_WAIT_MS) -> dict[str, Any] | None:
+    """Client side. Returns the reply, or None when no instance is listening.
+    `timeout_ms` bounds connecting; `reply_timeout_ms` bounds waiting for the answer."""
     sock = QLocalSocket()
     sock.connectToServer(name or pipe_name())
     if not sock.waitForConnected(timeout_ms):
@@ -63,7 +74,7 @@ def send_command(cmd: dict[str, Any], *, name: str | None = None, timeout_ms: in
     sock.waitForBytesWritten(timeout_ms)
     buf = b""
     while b"\n" not in buf:
-        if not sock.waitForReadyRead(timeout_ms):
+        if not sock.waitForReadyRead(reply_timeout_ms):
             break
         buf += bytes(sock.readAll())
     sock.disconnectFromServer()
@@ -72,7 +83,17 @@ def send_command(cmd: dict[str, Any], *, name: str | None = None, timeout_ms: in
     return json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
 
 
+@dataclass
+class Deferred:
+    """A handler's answer that isn't ready yet: `future` (from engine.submit) → `then(result)` → the reply."""
+    future: Future
+    then: Callable[[Any], dict[str, Any]]
+    timeout: float = 30.0
+
+
 class SingleInstance(QObject):
+    _deferred_done = Signal(object, object, object)   # socket, Deferred, reply-or-None: back on the UI thread
+
     def __init__(self, lock_path: Path, handlers: dict[str, Handler], name: str | None = None):
         super().__init__()
         self.name = name or pipe_name()
@@ -80,6 +101,7 @@ class SingleInstance(QObject):
         self._lock = QLockFile(str(lock_path))
         self._lock.setStaleLockTime(0)  # a crashed owner's lock is detected by PID instead of age
         self._server: QLocalServer | None = None
+        self._deferred_done.connect(self._finish_deferred)
 
     def acquire(self) -> bool:
         """True if we are the primary instance (and now listening)."""
@@ -117,11 +139,45 @@ class SingleInstance(QObject):
         while b"\n" in buf:
             line, buf = buf.split(b"\n", 1)
             reply = self._dispatch(line)
-            sock.write((json.dumps(reply) + "\n").encode("utf-8"))
-            sock.flush()
+            if isinstance(reply, Deferred):
+                self._wait_for(sock, reply)
+            else:
+                self._write(sock, reply)
         sock.setProperty("buf", buf)
 
-    def _dispatch(self, line: bytes) -> dict[str, Any]:
+    @staticmethod
+    def _write(sock: QLocalSocket, reply: dict[str, Any]) -> None:
+        try:
+            sock.write((json.dumps(reply) + "\n").encode("utf-8"))
+            sock.flush()
+        except RuntimeError:                  # the client hung up and Qt already deleted the socket
+            pass
+
+    def _wait_for(self, sock: QLocalSocket, d: Deferred) -> None:
+        """Answer later: on the engine's result, or with an error at the timeout, whichever comes first."""
+        state = {"sent": False}
+
+        def expire() -> None:
+            if not state["sent"]:
+                state["sent"] = True
+                d.future.cancel()
+                self._write(sock, {"ok": False, "error": f"no answer from the engine within {d.timeout:g}s"})
+        QTimer.singleShot(int(d.timeout * 1000), self, expire)
+        d.future.add_done_callback(lambda f: self._deferred_done.emit(sock, d, state))
+
+    def _finish_deferred(self, sock: QLocalSocket, d: Deferred, state: dict[str, bool]) -> None:
+        if state["sent"]:
+            return
+        state["sent"] = True
+        f = d.future
+        try:
+            reply = d.then(f.result()) if not f.cancelled() else {"ok": False, "error": "cancelled"}
+        except Exception as exc:
+            log.exception("deferred ipc command failed")
+            reply = {"ok": False, "error": str(exc)}
+        self._write(sock, reply)
+
+    def _dispatch(self, line: bytes) -> dict[str, Any] | Deferred:
         try:
             msg = json.loads(line.decode("utf-8"))
             cmd = msg.get("cmd")

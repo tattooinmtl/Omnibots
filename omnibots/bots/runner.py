@@ -97,6 +97,15 @@ def _job_status(turn_status: str) -> str:
             "error": "failed", "cancelled": "cancelled", "stuck": "blocked"}.get(turn_status, "failed")
 
 
+def provider_chain(prof: BotProfile) -> list[str]:
+    """A15.a.03: with multi_provider on (the default) a bot fails over across its whole chain; off, it
+    stays on its first provider's models and waits out a 429 instead of switching."""
+    if prof.multi_provider or not prof.chain:
+        return list(prof.chain)
+    first = prof.chain[0].split("/")[0].split("::")[0]
+    return [m for m in prof.chain if m.split("/")[0].split("::")[0] == first]
+
+
 class JobRunner:
     def __init__(self, *, db, registry: BotRegistry, router: Router, approvals: ApprovalCenter, home: Path,
                  sandbox: Sandbox, bus=None, ledger=None, keep_awake=None,
@@ -325,7 +334,7 @@ class JobRunner:
         for t in [*await self.mcp_tools_for(prof, events.emit), *(extra_tools or [])]:
             tools.add(t)
         agent = BotAgent(bot_id=bot_id, name=prof.name, role=prof.role, workspace=workspace or prof.workspace, router=self.router,
-                         chain=chain or prof.chain, tools=tools, approvals=self.approvals,
+                         chain=chain or provider_chain(prof), tools=tools, approvals=self.approvals,
                          events=events, sandbox=self.sandbox,
                          system_prompt=self.system_prompt(prof), max_iterations=max_iterations or int(prof.limits.get("max_iterations", 40)),
                          priority="boss" if prof.is_boss else "work", token_budget=budget.get("tokens"), budget=self.budget)

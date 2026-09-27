@@ -62,11 +62,11 @@ def test_a_goal_that_runs_out_of_time_is_resumable_and_says_whats_left(tmp_path)
         with MockProviders() as mock:
             mock.script("plan", sse(plan_json(sub("style the page", done="style.css exists"))))
             slow = sse("", tool_calls=[call("list_jobs")])
-            slow["hold"] = 3.0                                 # the boss is slow: the 1 s goal budget runs out
+            slow["hold"] = 20.0                                # the boss is slow: the 8 s goal budget runs out
             mock.script("boss", sse("", tool_calls=[call("plan_goal", goal="add a css")]), slow)
             e = await build(tmp_path, mock)
             q = await e["bus"].subscribe()
-            out = await e["orch"].run_goal("add a css to the index.html", seconds=1.0)
+            out = await e["orch"].run_goal("add a css to the index.html", seconds=8.0)   # room for plan_goal on a busy PC
             jobs = {j.title: j.status for j in await e["graph"].jobs(out["project_id"])}
             msgs = []
             while True:

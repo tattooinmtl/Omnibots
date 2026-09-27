@@ -419,6 +419,8 @@ def _format_error(status: int, msg: str, model: ModelSpec) -> str:
 
 
 async def list_models(p: ProviderInfo, client: httpx.AsyncClient | None = None) -> list[str]:
+    """The models a provider offers (`GET /models`). Not called yet: kept for the Providers panel's
+    "test" button (A11.a.01)."""
     own = client is None
     client = client or httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
     try:
