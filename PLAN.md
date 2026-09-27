@@ -974,8 +974,7 @@ _(empty)_
 > this to make a better flow, we're polishing the app"). Principle: **the bots may work on their own, on a leash you can
 > see and pull.** Leash and honesty come before more autonomy: autonomy on top of fake "done" makes things worse.
 > Built before A14 (its scenarios run on this); A14.99 stays the Phase A gate. Tools are A8.d (Stage 3 below).
-> Order: a (polish) → b (leash) → c (honest done) → A8.d (hands) → d (keeps going) → e (a mind) → f (watching) → g (feel).
-> **Open (user):** the default autonomy dial (A15.b.02) and whether polish (A15.a) or the leash (A15.b) goes first.
+> **Decided (user, 2026-09-27):** new projects start on **Watch**; build order is **b (leash) first**, then a, c, A8.d, d, e, f, g.
 
 #### A15.a — Polish what exists
 - **A15.a.01** ⏳ **The control pipe doesn't freeze the window.** Today the pipe handlers wait on the Qt thread with `engine.submit(...).result(timeout=5…60)` (`app.py` 102–141): `--send goal` freezes the UI up to 30 s. The handler answers when the engine's future is done (a callback), never blocks.
@@ -985,7 +984,7 @@ _(empty)_
 
 #### A15.b — The leash
 - **A15.b.01** ⏳ **Who started it.** Every run carries an origin: `user` (a goal or chat you started), `watch` (file change), `routine`, `night`, `relay`, `continue` (A15.d). Stored on the job (migration) and shown on the board and the bot card. Background = every origin except `user`.
-- **A15.b.02** ⏳ **Autonomy dial per project: Off / Watch / Fix.** Off = the bots listen and answer, start nothing. Watch = checks and reports, starts no fix. Fix = may open jobs to repair. **Default for new projects: the user decides** (Claude suggests Watch). The tray gets **"Pause background work"** (all projects; Panic stays separate). Every background start checks the dial first.
+- **A15.b.02** ⏳ **Autonomy dial per project: Off / Watch / Fix.** Off = the bots listen and answer, start nothing. Watch = checks and reports, starts no fix. Fix = may open jobs to repair. **Default for new projects: Watch** (user, 2026-09-27). The tray gets **"Pause background work"** (all projects; Panic stays separate). Every background start checks the dial first.
 - **A15.b.03** ⏳ **Calmer file watch.** Today (A7.a.15) any change in an open project starts an Omi turn after 90 s, the user's own edits included. It waits until the folder is quiet for a few minutes (setting), one burst = one check, whoever made it, and follows the dial.
 - Budget: **A9.c.03** ✅ (the project cap that asks). The team/bot caps (A9.c.02) stay as they are.
 
@@ -1090,7 +1089,7 @@ All were decided by the user on 2026-09-25. Changing any of them needs the user'
 
 7. **Tools** (2026-09-27): **keep "never all tools for all bots"** (A8.b.03). Search by default; a bot that lacks a tool asks for its use on the board and another bot runs it (the tool relay, A8.d.02). Grok's "every tool for every bot" and "forged tools with network access" are dropped.
 8. **Project budget** (2026-09-27): 200k tokens per project per day, not a wall: at the limit the bot asks with its estimate, and the user adds more (A9.c.03). 0 turns it off.
-- **Open**: the default autonomy dial for new projects (A15.b.02), and whether polish (A15.a) or the leash (A15.b) goes first.
+9. **Autonomy** (2026-09-27): new projects start on **Watch** (A15.b.02); **the leash (A15.b) is built first**, before the polish items (A15.a).
 
 ---
 
@@ -1122,7 +1121,7 @@ All were decided by the user on 2026-09-25. Changing any of them needs the user'
 
 ## 9. Notes Log
 
-- 2026-09-27 Claude: **Re-plan of `grok_audit.md` §7 → new phase A15** ("life on a leash"), placed before A14. Order: polish → leash → honest done → tools (A8.d) → work keeps going → a mind → watching → feel. **A9.c.03 built** (project budget that asks for more with an estimate). Cross-phase: A7.a.11 (goal end cancels workers) and A7.a.15 (file watch) change under A15.d.01 and A15.b.03; A8.d.06 added (Grok F9); §7 decisions 7–8 recorded; two decisions still open (§7).
+- 2026-09-27 Claude: **Re-plan of `grok_audit.md` §7 → new phase A15** ("life on a leash"), placed before A14. Order: polish → leash → honest done → tools (A8.d) → work keeps going → a mind → watching → feel. **A9.c.03 built** (project budget that asks for more with an estimate). Cross-phase: A7.a.11 (goal end cancels workers) and A7.a.15 (file watch) change under A15.d.01 and A15.b.03; A8.d.06 added (Grok F9); §7 decisions 7–9 recorded (Watch by default; the leash first).
 
 - 2026-09-27 Claude: **A8.d tool access** added (user decision on `grok_audit.md` F2). Keep "never all tools for all bots"; `web_search`/`web_fetch` by default and for Omi; a **tool relay** on the board (`request_tool` → `TOOL_REQUEST` → Omi's `relay_tool` → a holder runs it under its own ceiling and approvals → `TOOL_RESULT` back to the asker); `risk_ceiling` enforced. Cross-phase: **ADR-10** gets one exception (`TOOL_RESULT` goes straight to the asker), **§4.3** gains `TOOL_REQUEST`/`TOOL_RESULT`, A8.b.03 is unchanged. Grok's "all tools" and "networked forged tools" are ⛔ dropped. Not started.
 
