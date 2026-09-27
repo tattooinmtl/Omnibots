@@ -53,8 +53,9 @@ How you run a goal:
    replacement, and update_job its dependents to need the replacement (or fix a job's criteria with update_job).
    Never invent placeholder jobs.
 6. Use council for vendor/architecture choices, spending, or anything R3+ (assign_job refuses R3+ jobs without one).
-7. When every job is accepted, review_work on the project. If it needs fixes, add_job a follow-up and assign it
-   (a worker whose job is over no longer reads messages). Then submit a short final result for the user.
+7. When every job is accepted, review_work on the project. If it needs fixes, add_job a follow-up and assign it.
+   Then submit a short final result. Submitting does not end the project: you and the workers keep reading the
+   board, and a change in the project folder wakes a maintenance check. Keep the result working.
 Never do the workers' jobs yourself. Keep messages short and concrete. Ask the user only when a decision is truly theirs."""
 
 LESSON_PROMPT = """You extract lessons from a finished job for the bot's memory.
@@ -113,6 +114,7 @@ class JobRunner:
         self.vault = vault                                 # A9.c.01: resolves {{secret:x}} inside the tool layer
         self.budget = budget                               # A9.c.02: daily token caps and money caps
         self.active: dict[str, BotAgent] = {}             # bot_id -> running agent (for steering / pause)
+        self._starting: set[str] = set()                  # claimed before the first await, so two wakes can't double-run
         self.tasks: dict[str, asyncio.Task] = {}          # bot_id -> the task running its job (for stop)
         self.last_activity: dict[str, float] = {}         # bot_id -> monotonic time of its last event (stall detection)
         user_profile_path(home)                            # make sure the shared profile exists
@@ -269,6 +271,20 @@ class JobRunner:
         """Run one job. `job_id` may be an existing (graph) job: it's restarted as a new attempt.
         `workspace`: a shared project folder instead of the bot's own. `chain`: override the
         profile's providers (the night shift uses the cheap lane). `budget`: {"tokens", "seconds"}."""
+        if bot_id in self.active or bot_id in self._starting:
+            return JobOutcome(job_id or "", bot_id, "skipped", None, 0.0, [])
+        self._starting.add(bot_id)
+        try:
+            return await self._run_held(bot_id, task, title=title, job_id=job_id, project_id=project_id,
+                                        workspace=workspace, chain=chain, budget=budget, extra_tools=extra_tools,
+                                        max_iterations=max_iterations, inbox=inbox)
+        finally:
+            self._starting.discard(bot_id)
+
+    async def _run_held(self, bot_id: str, task: str, *, title: str | None = None, job_id: str | None = None,
+                        project_id: str | None = None, workspace: Path | None = None, chain: list[str] | None = None,
+                        budget: dict[str, Any] | None = None, extra_tools: list[Tool] | None = None,
+                        max_iterations: int | None = None, inbox: Inbox | None = None) -> JobOutcome:
         prof = await self.registry.get(bot_id)
         if not prof or prof.status == "archived":
             raise ValueError(f"no active bot {bot_id}")

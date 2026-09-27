@@ -411,5 +411,5 @@ def test_prompts_carry_todays_date_and_idle_workers_are_flagged(tmp_path):
             return prompt, idle, added, bad, jobs
     prompt, idle, added, bad, jobs = run(go())
     assert f"Today's date is {datetime.now():%Y-%m-%d}" in prompt
-    assert "is not working on anything right now" in idle and "add_job" in idle
+    assert "not inside a job right now" in idle and "keep reading the board" in idle and "assign_job" in idle
     assert added.startswith("added job_") and "[ready]" in added and bad.startswith("ERROR") and jobs == ["fix the date"]
