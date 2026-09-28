@@ -153,9 +153,24 @@ class ProjectsWindow(QDialog):
         info.addWidget(d, 1)
         v.addLayout(info)
         if p.get("live_url"):
-            live = QLabel(f"Live: <a style='color:{theme.ACCENT_CYAN}' href='{p['live_url']}'>{p['live_url']}</a>")
+            state = {"ok": f"<span style='color:{theme.GREEN}'>✔ up</span>",
+                     "down": f"<span style='color:{theme.RED}'>✖ down: {str(p.get('live_error') or '')[:90]}</span>"}.get(
+                         p.get("live_status") or "", f"<span style='color:{theme.TEXT_DIM}'>not checked yet</span>")
+            live = QLabel(f"Live: <a style='color:{theme.ACCENT_CYAN}' href='{p['live_url']}'>{p['live_url']}</a>  ·  {state}")
             live.setOpenExternalLinks(True)
+            live.setWordWrap(True)
             v.addWidget(live)
+        for r in p.get("routines", []):                    # A15.f.03: what Omi scheduled for this project
+            rr = QHBoxLayout()
+            lab = QLabel(f"↻ Routine <b>{r['name']}</b>  <span style='color:{theme.TEXT_DIM}'>{r['schedule']}"
+                         + ("" if r.get("enabled", 1) else " · off") + "</span>")
+            rr.addWidget(lab, 1)
+            rm = QPushButton("Remove")
+            rm.setToolTip("Delete this routine")
+            rm.clicked.connect(lambda _=False, rid=r["id"], name=r["name"]: self._ask(self.engine.remove_routine(rid),
+                                                                                    lambda _r: f"routine '{name}' removed"))
+            rr.addWidget(rm)
+            v.addLayout(rr)
         actions = QHBoxLayout()
         dial_label = QLabel("On its own:")
         dial_label.setObjectName("dim")

@@ -82,7 +82,7 @@ async def projects(db, limit: int = 40) -> list[dict[str, Any]]:
     """Open and recent projects: goal, status, the dial, live address, jobs, tokens today and in total, your verdict."""
     today = time.strftime("%Y-%m-%d", time.gmtime())
     out = []
-    for p in await db.read("SELECT id, goal, status, autonomy, live_url, path, created_at FROM projects "
+    for p in await db.read("SELECT id, goal, status, autonomy, live_url, live_status, live_error, path, created_at FROM projects "
                            "ORDER BY (status = 'cancelled'), created_at DESC LIMIT ?", (limit,)):
         tok = await db.read_one(
             f"SELECT SUM({TOK.replace('tokens', 'u.tokens')}) AS t, "
@@ -93,7 +93,8 @@ async def projects(db, limit: int = 40) -> list[dict[str, Any]]:
         verdict = await db.read_one("SELECT verdict FROM verdicts WHERE project_id=? AND claim_id IS NULL ORDER BY id DESC LIMIT 1",
                                     (p["id"],))
         out.append({"id": p["id"], "goal": p["goal"], "status": p["status"], "autonomy": p["autonomy"],
-                    "live_url": p["live_url"], "path": p["path"], "created_at": p["created_at"],
+                    "live_url": p["live_url"], "live_status": p["live_status"], "live_error": p["live_error"],
+                    "path": p["path"], "created_at": p["created_at"],
                     "tokens": int(tok["t"] or 0) if tok else 0, "tokens_today": int(tok["today"] or 0) if tok else 0,
                     "jobs": int(jobs["n"] or 0), "active_jobs": int(jobs["live"] or 0),
                     "verdict": verdict["verdict"] if verdict else None})

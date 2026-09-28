@@ -23,6 +23,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from omnibots.board.a2a import Inbox
@@ -53,11 +54,12 @@ class GoalContext:
 class BossToolkit:
     def __init__(self, *, ctx: GoalContext, db, bus, inbox: Inbox, registry, runner, graph, projects, ledger,
                  factory: BotFactory, router, skills: list | None = None, planner_chain: list[str] | None = None,
-                 playbooks=None):
+                 playbooks=None, schedule=None):
         self.c, self.db, self.bus, self.inbox = ctx, db, bus, inbox
         self.registry, self.runner, self.graph, self.projects, self.ledger = registry, runner, graph, projects, ledger
         self.factory, self.router, self.skills = factory, router, skills or []
         self.chain = planner_chain or list(MINIMAX_FIRST)
+        self.schedule = schedule                            # A15.f.03: routines, triggers, night shift (the app only)
         self.playbooks = playbooks
 
     # ── helpers ────────────────────────────────────────────────────────
@@ -281,8 +283,8 @@ class BossToolkit:
         for ev in await self.db.read("SELECT ref, detail_json FROM evidence WHERE claim_id=? AND kind='url_quote'", (cid,)):
             d = json.loads(ev["detail_json"] or "{}")
             if d.get("live") and d.get("verified"):
-                await self.db.write("UPDATE projects SET live_url=?, live_checked_at=? WHERE id=?",
-                                    (ev["ref"], d.get("checked_at"), self.c.project_id))
+                await self.db.write("UPDATE projects SET live_url=?, live_quote=?, live_status='ok', live_error=NULL, live_checked_at=? "
+                                    "WHERE id=?", (ev["ref"], d.get("quote"), d.get("checked_at"), self.c.project_id))
                 return ev["ref"]
         return None
 
@@ -339,6 +341,40 @@ class BossToolkit:
         ready = await self.graph.ready(self.c.project_id)
         return (f"{job.id} done (claim #{cid}, checked)." + (f" Tests re-run: {'; '.join(notes)}." if notes else "")
                 + (f" Live at {live}." if live else "") + (f" Now ready: {', '.join(j.id for j in ready)}" if ready else ""))
+
+    # ── scheduling for this project (A15.f.03) ─────────────────────────────
+    async def add_routine(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        try:
+            rid = await self.schedule.routines.add(str(args.get("name") or "routine"), str(args.get("goal") or ""),
+                                                   str(args.get("schedule") or ""), project_id=self.c.project_id)
+        except ValueError as exc:
+            return f"ERROR: {exc} (schedule is cron: minute hour day month weekday, e.g. '0 8 * * 1' = Mondays 08:00)"
+        await self.bus.publish(topic_project(self.c.project_id), "PROGRESS_UPDATE",
+                               {"text": f"Omi added a routine for this project: '{args.get('name')}' ({args.get('schedule')}): {args.get('goal')}"},
+                               sender_type="bot", sender_id=BOSS_ID, project_id=self.c.project_id)
+        return f"routine {rid} added; it continues this project when it's due (the user sees it in Open projects and can remove it)"
+
+    async def add_trigger(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        kind, config = str(args.get("kind") or ""), dict(args.get("config") or {})
+        if kind == "file":                                 # the project folder is the bots' world (A15.e.04)
+            p = Path(str(config.get("path") or ""))
+            p = (p if p.is_absolute() else self.c.folder / p).resolve()
+            if not p.is_relative_to(self.c.folder.resolve()):
+                return "ERROR: a file trigger watches something inside this project's folder"
+            config["path"] = str(p)
+        try:
+            tid = await self.schedule.triggers.add(str(args.get("name") or "trigger"), kind, config, str(args.get("goal") or ""),
+                                                   project_id=self.c.project_id)
+        except ValueError as exc:
+            return f"ERROR: {exc}"
+        return f"trigger {tid} added for this project"
+
+    async def enqueue_night(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        goal = str(args.get("goal") or "").strip()
+        if not goal:
+            return "ERROR: enqueue_night needs a goal"
+        row = await self.schedule.night.enqueue_saved(goal, self.c.project_id)
+        return f"queued for the night shift (#{row}): it runs on the cheap lane while the user is away"
 
     async def reject_claim(self, args: dict[str, Any], ctx: ToolContext) -> str:
         cid = int(args.get("claim_id") or 0)
@@ -452,4 +488,13 @@ class BossToolkit:
               {"question": s, "context": s}, self.council, ["question"], timeout=1200),
             T("ask_user", "Ask the user a question on the board and wait for their answer (only when the decision is truly theirs).",
               {"question": s, "timeout_seconds": {"type": "integer"}}, self.ask_user, ["question"], timeout=86500),
-        ]
+        ] + ([
+            T("add_routine", "Add a routine for THIS project: a cron schedule ('0 8 * * 1' = Mondays 08:00) on which you get a round "
+              "on it with that goal (e.g. a weekly check). The user can see and remove it.", {"name": s, "goal": s, "schedule": s},
+              self.add_routine, req=("name", "goal", "schedule")),
+            T("add_trigger", "Add a trigger for THIS project: kind file (config.path inside the project), board (config.type, "
+              "optional topic/contains) or threshold (config.metric, below/above). When it fires you get a round with that goal.",
+              {"name": s, "kind": s, "config": {"type": "object"}, "goal": s}, self.add_trigger, req=("name", "kind", "config", "goal")),
+            T("enqueue_night", "Queue low-priority work for the night shift (the cheap lane, only while the user is away).",
+              {"goal": s}, self.enqueue_night, req=("goal",)),
+        ] if self.schedule is not None else [])
