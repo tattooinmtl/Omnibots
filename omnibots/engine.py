@@ -239,6 +239,9 @@ class Engine:
                                          skills=lambda: self.runner.skill_pool.all(),       # Omni + OmniBots + library folders
                                          goal_seconds=float(o.get("goal_minutes", 30)) * 60,
                                          playbooks=self.playbooks)
+        self.orchestrator.keep_working = True                                # A15.d: work outlives a round in the app
+        self.orchestrator.max_rounds = int(o.get("rounds_per_day", 8))
+        self.orchestrator.leash = self.leash
         self.team = TeamController(db=self.db, bus=self.bus, runner=self.runner, graph=self.graph, orchestrator=self.orchestrator,
                                    approvals=self.approvals, seats=self.seats, stall_after=float(o.get("stall_minutes", 5)) * 60)
         self.spawn(self.team.monitor(), name="stall-monitor")
@@ -249,6 +252,7 @@ class Engine:
                                      settle_seconds=float(o.get("watch_settle_seconds", 180)),
                                      paused=lambda: bool(self.team and self.team.paused), leash=self.leash)
         self.spawn(self.presence.run(), name="presence")
+        self.spawn(self._carry_on_after_restart(), name="carry-on")         # A15.d.02
         self.spawn(self._forward_board(), name="board-to-ui")
         if self.home is not None:
             self.spawn(self._upkeep(), name="backup-and-housekeeping")      # A16.c
@@ -281,6 +285,20 @@ class Engine:
             log.warning("startup cleanup (cut-off or unneeded work): %s", counts)
             await self.db.audit("system", None, "orphans_recovered", json.dumps(counts))
         return counts
+
+    async def _carry_on_after_restart(self, delay: float = 5.0) -> list[str]:
+        """A15.d.02: work cut off by a crash or a quit (`interrupted`) carries on after a restart, in
+        projects that aren't closed. What you stopped yourself (`stopped`) waits for ▶ Start."""
+        await asyncio.sleep(delay)
+        rows = await self.db.read("SELECT DISTINCT j.project_id AS pid FROM jobs j JOIN projects p ON p.id = j.project_id "
+                                  "WHERE j.status='interrupted' AND p.status != 'cancelled'")
+        started = []
+        for r in rows:
+            out = await self.orchestrator.continue_goal(r["pid"], "OmniBots restarted: carry on where the work was cut off.")
+            log.info("carry on %s after restart: %s", r["pid"], out)
+            if out == "started":
+                started.append(r["pid"])
+        return started
 
     async def _load_omni(self) -> None:
         try:
@@ -384,7 +402,7 @@ class Engine:
     async def ui_tray(self) -> dict[str, Any]:
         """Everything the tray menu shows, in one engine round trip (A11.b.01)."""
         running = bool(self.runner.active) or any(not t.done() for t in self.orchestrator.boss_tasks.values())
-        interrupted = (await self.db.read_one("SELECT COUNT(*) AS n FROM jobs WHERE status='interrupted'"))["n"]
+        interrupted = (await self.db.read_one("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('interrupted','stopped')"))["n"]
         jobs = {r["assigned_bot_id"]: r["title"] for r in await self.db.read(
             "SELECT assigned_bot_id, title FROM jobs WHERE status IN ('assigned','running','review','waiting_approval','paused') "
             "AND assigned_bot_id IS NOT NULL ORDER BY started_at")}

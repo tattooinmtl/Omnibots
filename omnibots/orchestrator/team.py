@@ -5,8 +5,9 @@ Controls cascade from Omi to every bot:
            finish; MiniMax seats are handed back; jobs show `paused`
   resume   everyone continues where they stopped
   stop     every running job is cancelled now (sandboxed processes killed);
-           jobs become `interrupted`, which is resumable
-  start    goals with interrupted work are picked up again by Omi
+           jobs become `stopped` (A15.d.01: nothing restarts them on its own; work cut off by a
+           crash or a quit is `interrupted`, and that carries on by itself)
+  start    goals with stopped or interrupted work are picked up again by Omi
   restart  stop, then start (Omi reloads its memory, projects, interrupted jobs)
   panic    like stop, plus: every pending approval is denied and everyone
            waiting for a seat is sent away; audited as a panic
@@ -95,20 +96,20 @@ class TeamController:
             await asyncio.wait(waiting, timeout=15)
         await asyncio.sleep(0)
         if live_ids:
-            await self.db.write(f"UPDATE jobs SET status='interrupted' WHERE id IN ({','.join('?' * len(live_ids))})", live_ids)
+            await self.db.write(f"UPDATE jobs SET status='stopped' WHERE id IN ({','.join('?' * len(live_ids))})", live_ids)
         self.paused = False
-        await self._say(("PANIC STOP" if panic else "team stopped") + f": {len(stopped)} job(s) interrupted"
+        await self._say(("PANIC STOP" if panic else "team stopped") + f": {len(stopped)} job(s) stopped"
                         + (f", {denied} approval(s) denied, {sent_away} left the seat line" if panic else ""))
         return {"stopped": stopped, "approvals_denied": denied, "left_seat_line": sent_away}
 
     async def start(self) -> dict[str, Any]:
         """Pick up every goal that has interrupted work."""
-        rows = await self.db.read("SELECT DISTINCT project_id FROM jobs WHERE status='interrupted' AND project_id IS NOT NULL")
+        rows = await self.db.read("SELECT DISTINCT project_id FROM jobs WHERE status IN ('interrupted','stopped') AND project_id IS NOT NULL")
         resumed = []
         for r in rows:
             pid = r["project_id"]
             for j in await self.graph.jobs(pid):
-                if j.status == "interrupted":
+                if j.status in ("interrupted", "stopped"):
                     await self.graph.resume(j.id)
             goal = (await self.db.read_one("SELECT goal FROM projects WHERE id=?", (pid,)))["goal"]
             self.orch.boss_tasks[pid] = asyncio.create_task(self.orch.run_goal(goal, project_id=pid, resume=True), name=f"goal-{pid}")
@@ -149,8 +150,8 @@ class TeamController:
         if task:
             await asyncio.wait([task], timeout=15)
         if live_ids:
-            await self.db.write(f"UPDATE jobs SET status='interrupted' WHERE id IN ({','.join('?' * len(live_ids))})", live_ids)
-        await self._tell_boss(f"the user stopped {bot_id}; its job is interrupted (reassign it or resume it later)")
+            await self.db.write(f"UPDATE jobs SET status='stopped' WHERE id IN ({','.join('?' * len(live_ids))})", live_ids)
+        await self._tell_boss(f"the user stopped {bot_id}; its job is stopped (reassign it, or the user resumes it with Start)")
         return True
 
     async def _tell_boss(self, text: str) -> None:

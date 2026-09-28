@@ -10,6 +10,7 @@ tokens each bot used. Committed and announced on the board.
 from __future__ import annotations
 
 import asyncio
+import time
 import json
 import logging
 from typing import Any
@@ -24,8 +25,8 @@ from omnibots.orchestrator.boss_tools import BossToolkit, GoalContext
 
 log = logging.getLogger(__name__)
 
-RESUME_NOTE = ("RESUMING after a stop: some jobs were interrupted. Start with list_jobs, re-assign interrupted or ready jobs, "
-               "and continue the goal from where it stopped.")
+RESUME_NOTE = ("RESUMING: this goal was cut off or stopped, or it's a new round of it. Start with list_jobs, re-assign "
+               "interrupted, stopped or ready jobs, decide any claims waiting for you, and continue from where it stopped.")
 
 
 class Orchestrator:
@@ -42,9 +43,15 @@ class Orchestrator:
         self.grace_seconds = grace_seconds                # workers get this long after the boss stops (A7.a.11)
         self.goals: dict[str, GoalContext] = {}
         self.boss_tasks: dict[str, asyncio.Task] = {}
+        # A15.d: the app keeps work going (workers outlive Omi's turn; out of time → a next round).
+        # Off by default: the CLI harness and the tests keep A7.a.11's "no worker outlives its goal".
+        self.keep_working = False
+        self.max_rounds = 8                                # continuation rounds per project per day
+        self.leash = None                                  # bots.leash.Leash, set by the engine
+        self._rounds: dict[tuple[str, str], int] = {}
 
     async def run_goal(self, goal: str, *, project_id: str | None = None, resume: bool = False,
-                       seconds: float | None = None) -> dict[str, Any]:
+                       seconds: float | None = None, note: str = "") -> dict[str, Any]:
         pid = project_id or await self.projects.create(goal)
         ctx = self.goals.get(pid) or GoalContext(project_id=pid, goal=goal, folder=self.projects.folder(pid))
         self.goals[pid] = ctx
@@ -63,6 +70,13 @@ class Orchestrator:
         task_text = ((RESUME_NOTE + "\n\n" if resume else "") + f"GOAL from the user:\n{goal}{here}\n\n"
                      f"Project id: {pid} (a label for your tools, NOT a folder name). Your current folder IS the project "
                      f"folder ({ctx.folder}); files go at its top level. Run it with your tools, then submit.")
+        if note:
+            task_text = f"{note}\n\n{task_text}"
+        if resume:                                         # A15.d: what the team left for Omi while it was away
+            waiting = await self.db.read("SELECT id, bot_id, text FROM claims WHERE project_id=? AND status='submitted' ORDER BY id", (pid,))
+            if waiting:
+                task_text += "\n\nClaims waiting for your decision (accept_claim / reject_claim):\n" + "\n".join(
+                    f"- claim #{c['id']} from {c['bot_id']}: {c['text'][:200]}" for c in waiting)
         try:
             out = await self.runner.run(BOSS_ID, task_text, title=boss_job.title, job_id=boss_job.id, project_id=pid,
                                         workspace=ctx.folder, extra_tools=kit.tools(), inbox=inbox,
@@ -70,10 +84,11 @@ class Orchestrator:
         finally:
             inbox.close()
         # Workers still running when the boss stopped get a grace period, then the report.
-        live = [t for t in ctx.worker_tasks.values() if not t.done()]
-        if live:
-            await asyncio.wait(live, timeout=self.grace_seconds)
-        await self._stop_leftover_workers(ctx)
+        if not self.keep_working:                          # A7.a.11 (CLI, tests): no worker outlives its goal
+            live = [t for t in ctx.worker_tasks.values() if not t.done()]
+            if live:
+                await asyncio.wait(live, timeout=self.grace_seconds)
+            await self._stop_leftover_workers(ctx)
         await self._resumable_if_out_of_time(pid, boss_job.id, goal)
         report = await self.write_report(pid, out)
         await self.projects.set_status(pid, "done" if out.status == "completed" else "failed" if out.status == "failed" else "open")
@@ -93,11 +108,63 @@ class Orchestrator:
         left = [j for j in await self.graph.jobs(pid) if j.status in ("pending", "ready", "blocked", "assigned", "running")
                 and not j.title.startswith("[goal]")]
         todo = "; ".join(j.title for j in left[:6]) or "checking and finishing up"
+        if self.keep_working and self.rounds_left(pid) > 0:  # A15.d.03: out of time → a next round, not "press Start"
+            await self.bus.publish(topic_project(pid), "PROGRESS_UPDATE",
+                                   {"text": f"⏱ Out of time this round with {len(left)} job(s) left ({todo}); carrying on in a new round."},
+                                   sender_type="bot", sender_id=BOSS_ID, project_id=pid)
+            self.schedule_continue(pid, "Last round ran out of time. Carry on with what's left.", after=asyncio.current_task())
+            return True
         await self.bus.publish(topic_project(pid), "QUESTION",
                                {"text": f"⏱ I ran out of my time on \"{goal.splitlines()[0][:80]}\" with {len(left)} job(s) left "
                                         f"({todo}). Press ▶ Start in the tray to continue where I stopped."},
                                sender_type="bot", sender_id=BOSS_ID, recipient_id="user", project_id=pid)
         return True
+
+    # ── rounds (A15.d) ─────────────────────────────────────────────────
+    def rounds_left(self, pid: str) -> int:
+        return self.max_rounds - self._rounds.get((pid, time.strftime("%Y-%m-%d")), 0)
+
+    def schedule_continue(self, pid: str, reason: str, *, after: asyncio.Task | None = None) -> asyncio.Task:
+        """Start the next round once `after` (usually the round that's ending) is done."""
+        async def go():
+            if after is not None and not after.done():
+                await asyncio.wait([after])
+            return await self.continue_goal(pid, reason)
+        return asyncio.create_task(go(), name=f"continue-{pid}")
+
+    async def continue_goal(self, pid: str, reason: str) -> str:
+        """A next round of a project's goal: Omi picks up what's left (A15.d). Held by the leash (Off,
+        Pause background work) and by the daily round cap, after which you're asked as before."""
+        from omnibots.bots.leash import CURRENT_ORIGIN
+        task = self.boss_tasks.get(pid)
+        if task is not None and not task.done():
+            return "a round is already running"
+        row = await self.db.read_one("SELECT goal, status FROM projects WHERE id=?", (pid,))
+        if not row or row["status"] == "cancelled":
+            return "closed"
+        if self.leash is not None and (why := await self.leash.may_start("continue", pid)):
+            return f"held: {why}"
+        if self.rounds_left(pid) <= 0:
+            await self.bus.publish(topic_project(pid), "QUESTION",
+                                   {"text": f"I've done {self.max_rounds} rounds on \"{row['goal'].splitlines()[0][:80]}\" today and "
+                                            "there's still work left. Press ▶ Start in the tray to keep going."},
+                                   sender_type="bot", sender_id=BOSS_ID, recipient_id="user", project_id=pid)
+            return "round cap reached"
+        key = (pid, time.strftime("%Y-%m-%d"))
+        self._rounds[key] = self._rounds.get(key, 0) + 1
+        for j in await self.graph.jobs(pid):
+            if j.status == "interrupted" and not j.title.startswith("[goal]"):
+                await self.graph.resume(j.id)
+        await self.bus.publish(topic_project(pid), "PROGRESS_UPDATE",
+                               {"text": f"↻ Round {self._rounds[key]} of {self.max_rounds} today: {reason}"},
+                               sender_type="bot", sender_id=BOSS_ID, project_id=pid)
+        token = CURRENT_ORIGIN.set("continue")
+        try:
+            self.boss_tasks[pid] = asyncio.create_task(self.run_goal(row["goal"], project_id=pid, resume=True, note=reason),
+                                                       name=f"goal-{pid}")
+        finally:
+            CURRENT_ORIGIN.reset(token)
+        return "started"
 
     async def _close_unneeded_jobs(self, pid: str) -> list[str]:
         """A6.c.02: the goal passed review, so jobs Omi planned but routed around (never started)

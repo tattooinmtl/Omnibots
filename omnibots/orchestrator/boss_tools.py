@@ -85,7 +85,7 @@ class BossToolkit:
             if out.status == "completed":
                 await self.graph._set(await self.graph.get(job.id), "review")      # done only when the boss accepts
             else:
-                await self.graph.record_outcome(job.id, out.status, error=getattr(out.result, "error", None) if out.result else None)
+                await self.graph.continue_or_record(job.id, out)                   # step limit → next round (A15.d.03)
             return out
         self.c.job_bot[job.id] = bot_id
         self.c.worker_tasks[job.id] = asyncio.create_task(work(), name=f"job-{job.id}")

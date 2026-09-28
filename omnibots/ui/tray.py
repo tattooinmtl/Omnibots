@@ -210,7 +210,7 @@ class Tray(QObject):
 
         m.addSeparator()                                        # ── Omi and the whole team
         self._act(m, "▶  Start", self.start, enabled=not running and interrupted > 0,
-                  tip=f"Pick up {interrupted} interrupted job(s)" if interrupted else "Nothing interrupted to start")
+                  tip=f"Pick up {interrupted} stopped or interrupted job(s)" if interrupted else "Nothing stopped to start")
         if paused:
             self._act(m, "⏵  Resume", self.resume)
         else:
@@ -343,8 +343,8 @@ class Tray(QObject):
         self._later(self.engine.team.resume(), "Resumed", lambda r: f"{len(r.get('resumed', []))} bot(s) continue")
 
     def stop(self) -> None:
-        if self.confirm("Stop the team?", "Stop Omi and every bot now? Their jobs become 'interrupted' (Start picks them up again)."):
-            self._later(self.engine.team.stop(), "Stopped", lambda r: f"{len(r.get('stopped', []))} job(s) interrupted")
+        if self.confirm("Stop the team?", "Stop Omi and every bot now? Their jobs become 'stopped': nothing restarts them until you press ▶ Start."):
+            self._later(self.engine.team.stop(), "Stopped", lambda r: f"{len(r.get('stopped', []))} job(s) stopped")
 
     def restart(self) -> None:
         if self.confirm("Restart Omi?", "Stop everything, then Omi picks up every interrupted goal again?"):
@@ -356,7 +356,7 @@ class Tray(QObject):
                         lambda r: f"{len(r.get('stopped', []))} job(s) killed, {r.get('approvals_denied', 0)} approval(s) denied")
 
     def bot_action(self, name: str, bot_id: str) -> None:
-        if name == "stop_bot" and not self.confirm(f"Stop {bot_id}?", f"Stop {bot_id} now? Its job becomes 'interrupted' and Omi is told."):
+        if name == "stop_bot" and not self.confirm(f"Stop {bot_id}?", f"Stop {bot_id} now? Its job becomes 'stopped' and Omi is told."):
             return
         verb = {"pause_bot": "paused", "resume_bot": "resumed", "stop_bot": "stopped"}[name]
         self._later(getattr(self.engine.team, name)(bot_id), bot_id.capitalize(),
