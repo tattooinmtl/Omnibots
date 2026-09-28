@@ -514,6 +514,33 @@ class Engine:
                 log.exception("backup/housekeeping pass failed")
             await asyncio.sleep(check_every)
 
+    # ── usage, health, projects (A13, A11.a.03) ────────────────────────────
+    async def ui_stats(self, days: int = 14) -> dict[str, Any]:
+        from omnibots import stats
+        from omnibots.orchestrator import verdicts
+        names = {b.id: b.name for b in await self.registry.list()}
+        goals = {r["id"]: r["goal"] for r in await self.db.read("SELECT id, goal FROM projects")}
+        return {"usage": await stats.usage(self.db, days), "health": await stats.health(self.db, min(days, 7)),
+                "verdicts": await verdicts.stats(self.db), "names": names, "projects": goals}
+
+    async def ui_projects(self) -> list[dict[str, Any]]:
+        from omnibots import stats
+        rows = await stats.projects(self.db)
+        for r in rows:
+            r["folder"] = str(self.projects.folder(r["id"]))
+        return rows
+
+    async def close_project(self, project_id: str) -> str:
+        """A15.f.02 (first part): Close ends a project for good: Omi stops watching it and nothing
+        starts there on its own. Refused while work is running in it (stop that first)."""
+        busy = await self.db.read_one("SELECT COUNT(*) AS n FROM jobs WHERE project_id=? AND status IN ('running','assigned','review')",
+                                      (project_id,))
+        if busy and busy["n"]:
+            raise RuntimeError(f"{busy['n']} job(s) are still running or waiting in this project; stop them first")
+        await self.projects.set_status(project_id, "cancelled")
+        await self.db.audit("user", None, "project_closed", json.dumps({"project": project_id}))
+        return "closed"
+
     # ── your verdict on the work (A16.b) ───────────────────────────────────
     async def rate(self, project_id: str, verdict: int, note: str = "", claim_id: int | None = None) -> dict[str, Any]:
         from omnibots.orchestrator import verdicts
