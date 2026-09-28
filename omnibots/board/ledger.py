@@ -10,10 +10,13 @@ board.
 
 from __future__ import annotations
 
+import asyncio
+import html as htmllib
 import json
 import re
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from omnibots.board.bus import MessageBus
 from omnibots.board.types import topic_bot, topic_job
@@ -87,14 +90,48 @@ def check_evidence(items: list[dict[str, Any]], workspace: Path | None,
     return out
 
 
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", htmllib.unescape(str(text or ""))).strip().casefold()
+
+
+async def fetch_page(url: str) -> str:
+    """The text a url_quote cites, fetched the way web_fetch does (public addresses; loopback only for a
+    dev server on this PC). Raises on an error page or a refused address."""
+    from urllib.parse import urlparse
+
+    from omnibots.runtime.web_tools import _client, html_to_text, safe_get
+    host = (urlparse(url).hostname or "").lower()
+    async with _client() as c:
+        res = await safe_get(c, url, allow_loopback=host in ("localhost", "127.0.0.1", "::1"))
+    if res.status_code >= 400:
+        raise ValueError(f"HTTP {res.status_code}")
+    return html_to_text(res.text) if "html" in res.headers.get("content-type", "") else res.text
+
+
 class Ledger:
-    def __init__(self, db, bus: MessageBus, boss_id: str = "omi"):
+    def __init__(self, db, bus: MessageBus, boss_id: str = "omi", fetch: Callable[[str], Awaitable[str]] | None = None):
         self.db, self.bus, self.boss_id = db, bus, boss_id
+        self.fetch = fetch or fetch_page                  # A15.c.01: a url_quote is checked against the real page
+
+    async def verify_pages(self, items: list[dict[str, Any]]) -> None:
+        """A15.c.01: open every cited page; the quote must really be on it."""
+        for i, e in enumerate(items):
+            if e["kind"] != "url_quote":
+                continue
+            try:
+                text = await asyncio.wait_for(self.fetch(e["ref"]), 30)
+            except Exception as exc:
+                raise EvidenceError(f"evidence #{i + 1}: couldn't open {e['ref']} to check the quote ({exc})")
+            if _norm(e["detail"]["quote"]) not in _norm(text):
+                seen = re.sub(r"\s+", " ", text).strip()[:160]
+                raise EvidenceError(f"evidence #{i + 1}: the quote isn't on {e['ref']} (the page starts: {seen!r})")
+            e["detail"].update(verified=True, checked_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
 
     async def submit(self, *, bot_id: str, text: str, evidence: list[dict[str, Any]], job_id: str | None = None,
                      project_id: str | None = None, workspace: Path | None = None,
                      runs: list[dict[str, Any]] | None = None) -> int:
         items = check_evidence(evidence, workspace, runs)
+        await self.verify_pages(items)
         cid = await self.db.write("INSERT INTO claims (job_id, project_id, bot_id, text) VALUES (?,?,?,?)", (job_id, project_id, bot_id, text))
         await self.db.write_many("INSERT INTO evidence (claim_id, kind, ref, detail_json) VALUES (?,?,?,?)",
                                  [(cid, e["kind"], e["ref"], json.dumps(e["detail"])) for e in items])
@@ -145,11 +182,14 @@ def claim_tool(ledger: Ledger, *, project_id: str | None = None) -> Tool:
         "Report a result WITH proof. `text`: what you claim is done. `evidence`: list of {kind, ref, ...}. "
         "kind is one of file|diff|test|url_quote|screenshot|command. ref is a workspace path, URL or the command. "
         "command/test must be a command YOU ran in this job with run_shell/run_python (its real exit code and output are "
-        "attached automatically; you can add a `quote` from its output); url_quote needs quote. Omi accepts or rejects it.",
+        "attached automatically; you can add a `quote` from its output); a test is run again when Omi accepts. url_quote "
+        "needs quote, and the page is opened: the quote must really be on it. Add live=true to the url_quote of a deployed "
+        "result (the address where it's live). Omi accepts or rejects it.",
         {"type": "object", "properties": {
             "text": {"type": "string"},
             "evidence": {"type": "array", "items": {"type": "object", "properties": {
-                "kind": {"type": "string"}, "ref": {"type": "string"}, "exit_code": {"type": "integer"}, "quote": {"type": "string"}},
+                "kind": {"type": "string"}, "ref": {"type": "string"}, "exit_code": {"type": "integer"}, "quote": {"type": "string"},
+                "live": {"type": "boolean"}},
                 "required": ["kind", "ref"]}}},
          "required": ["text", "evidence"]},
         "R0", submit_claim, path_arg=None, summary=lambda a: f"submit_claim: {str(a.get('text', ''))[:60]}")

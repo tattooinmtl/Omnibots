@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -242,11 +243,52 @@ class BossToolkit:
                                   (COUNCIL, self.c.project_id))
         return bool(rows)
 
+    async def _rerun_tests(self, cid: int) -> tuple[list[str], str | None]:
+        """A15.c.02: every `test` the claim cites runs again now, in the project folder. Returns
+        (notes, failure) where failure is the real output of the first test that fails."""
+        notes: list[str] = []
+        sandbox = getattr(self.runner, "sandbox", None)
+        for ev in await self.db.read("SELECT ref, detail_json FROM evidence WHERE claim_id=? AND kind='test'", (cid,)):
+            ran = str(json.loads(ev["detail_json"] or "{}").get("ran") or ev["ref"])
+            if sandbox is None:
+                notes.append(f"{ran}: not re-run (no sandbox)")
+                continue
+            if ran.startswith("python <inline"):
+                notes.append(f"{ran}: not re-run (inline code isn't kept; ask for tests in a file)")
+                continue
+            if ran.startswith("python ") and (self.c.folder / ran[7:].strip()).is_file():
+                argv: list[str] | str = [sys.executable, "-I", str(self.c.folder / ran[7:].strip())]
+                res = await sandbox.run(argv, cwd=sandbox.new_run_dir(BOSS_ID), timeout=300, grant=[self.c.folder])
+            else:
+                res = await sandbox.run(ran, cwd=self.c.folder, timeout=300)
+            if res.timed_out or res.exit_code != 0:
+                return notes, f"`{ran}` fails now ({'timed out' if res.timed_out else f'exit {res.exit_code}'}):\n{res.output[-1500:]}"
+            notes.append(f"{ran}: passes again (exit 0)")
+        return notes, None
+
+    async def _keep_live_url(self, cid: int) -> str | None:
+        """A15.c.03: a checked url_quote marked live becomes the project's live address."""
+        for ev in await self.db.read("SELECT ref, detail_json FROM evidence WHERE claim_id=? AND kind='url_quote'", (cid,)):
+            d = json.loads(ev["detail_json"] or "{}")
+            if d.get("live") and d.get("verified"):
+                await self.db.write("UPDATE projects SET live_url=?, live_checked_at=? WHERE id=?",
+                                    (ev["ref"], d.get("checked_at"), self.c.project_id))
+                return ev["ref"]
+        return None
+
     async def accept_claim(self, args: dict[str, Any], ctx: ToolContext) -> str:
         cid = int(args.get("claim_id") or 0)
         row = await self.db.read_one("SELECT * FROM claims WHERE id=?", (cid,))
         if not row or row["project_id"] != self.c.project_id:
             return "ERROR: no such claim in this project"
+        if row["status"] == "submitted":
+            notes, failure = await self._rerun_tests(cid)
+            if failure:                                    # done means checked: a test that fails now is a rejection
+                out = await self.reject_claim({"claim_id": cid, "reason": f"re-run on accept: {failure[:600]}",
+                                               "new_instructions": "Make that test pass, run it again, then submit a new claim."}, ctx)
+                return f"NOT accepted: {failure}\n→ {out}"
+        else:
+            notes = []
         try:
             await self.ledger.decide(cid, True, str(args.get("reason") or "evidence checks out"), BOSS_ID)
         except ValueError as exc:
@@ -258,8 +300,11 @@ class BossToolkit:
                 await asyncio.wait_for(asyncio.shield(task), 300)     # let the worker finish its turn cleanly
             await self.graph._set(await self.graph.get(job.id), "completed")
             await self.graph.record_outcome(job.id, "completed")
+        live = await self._keep_live_url(cid)
         ready = [j for j in await self.graph.ready(self.c.project_id)]
-        return f"claim #{cid} accepted." + (f" Now ready: {', '.join(f'{j.id} ({j.title})' for j in ready)}" if ready else "")
+        return (f"claim #{cid} accepted." + (f" Tests re-run: {'; '.join(notes)}." if notes else "")
+                + (f" Live at {live} (kept on the project)." if live else "")
+                + (f" Now ready: {', '.join(f'{j.id} ({j.title})' for j in ready)}" if ready else ""))
 
     async def reject_claim(self, args: dict[str, Any], ctx: ToolContext) -> str:
         cid = int(args.get("claim_id") or 0)
