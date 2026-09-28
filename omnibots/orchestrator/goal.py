@@ -78,6 +78,10 @@ class Orchestrator:
             if waiting:
                 task_text += "\n\nClaims waiting for your decision (accept_claim / reject_claim):\n" + "\n".join(
                     f"- claim #{c['id']} from {c['bot_id']}: {c['text'][:200]}" for c in waiting)
+            desk = getattr(self.runner, "relay", None)
+            if desk is not None and desk.waiting(pid):           # A8.d.02
+                task_text += "\n\nTool requests waiting for you (relay_tool / answer_tool_request / decline_tool):\n" + "\n".join(
+                    f"- {r['id']}: {r['bot_id']} needs {r['tool']} because {r['why'][:150]}" for r in desk.waiting(pid))
         try:
             out = await self.runner.run(BOSS_ID, task_text, title=boss_job.title, job_id=boss_job.id, project_id=pid,
                                         workspace=ctx.folder, extra_tools=kit.tools(), inbox=inbox,

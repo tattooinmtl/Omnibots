@@ -64,6 +64,8 @@ watch_settle_seconds = 180
 rounds_per_day = 8
 # PLAN.md A15.f.01: how often a project's live address is opened to check it still shows what proved it live.
 live_check_minutes = 30
+# PLAN.md A8.d.02: how long a bot waits for a tool it asked another bot to run for it.
+tool_relay_minutes = 10
 
 [skills]
 # Extra skill libraries the bots can use (on top of Omni's skills and ~/.omnibots/skills).

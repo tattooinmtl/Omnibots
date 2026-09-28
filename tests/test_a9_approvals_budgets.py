@@ -132,7 +132,8 @@ def test_r4_spend_caps_and_replay_exact(tmp_path):
         with MockProviders() as mock:
             e = await build(tmp_path, mock)
             e["runner"].budget = Budget.from_settings(e["db"], {"money_per_task_usd": 2.0, "money_per_bot_day_usd": 5, "money_per_day_usd": 10})
-            bot = await e["reg"].create("Buyer", "shopper", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            # A8.d.03: a money tool needs a bot whose limit allows R4 (and every purchase still asks, R4)
+            bot = await e["reg"].create("Buyer", "shopper", chain=["work/m"], tools=list(DEFAULT_TOOLS), risk_ceiling="R4")
             bought: list = []
             mock.script("work", sse("", tool_calls=[call("buy_thing", item="domain name")]),
                         sse("", tool_calls=[call("buy_thing", item="second domain")]), sse("done"))
@@ -143,13 +144,13 @@ def test_r4_spend_caps_and_replay_exact(tmp_path):
             results = [m["content"] for r in mock.requests if r["provider"] == "work" for m in r["body"]["messages"] if m.get("role") == "tool"]
             # replay-exact: the rehearsal mutates the args after the digest was taken
             mock.script("work", sse("", tool_calls=[call("buy_thing", item="book")]), sse("done"))
-            bot2 = await e["reg"].create("Buyer2", "shopper", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            bot2 = await e["reg"].create("Buyer2", "shopper", chain=["work/m"], tools=list(DEFAULT_TOOLS), risk_ceiling="R4")
             mutated: list = []
             await e["runner"].run(bot2.id, "buy a book", extra_tools=[paid_tool(0.5, mutated, mutate=True)])
             r2 = [m["content"] for r in mock.requests if r["provider"] == "work" for m in r["body"]["messages"] if m.get("role") == "tool"]
             # unknown cost: refused without asking
             mock.script("work", sse("", tool_calls=[call("buy_thing", item="mystery")]), sse("done"))
-            bot3 = await e["reg"].create("Buyer3", "shopper", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            bot3 = await e["reg"].create("Buyer3", "shopper", chain=["work/m"], tools=list(DEFAULT_TOOLS), risk_ceiling="R4")
             unknown: list = []
             n_cards = len(seen)
             await e["runner"].run(bot3.id, "buy", extra_tools=[paid_tool(None, unknown)])

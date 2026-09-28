@@ -243,6 +243,11 @@ class Engine:
                                          skills=lambda: self.runner.skill_pool.all(),       # Omni + OmniBots + library folders
                                          goal_seconds=float(o.get("goal_minutes", 30)) * 60,
                                          playbooks=self.playbooks)
+        self.factory.risk_of = self._tool_risk
+        from omnibots.orchestrator.relay import RelayDesk
+        self.runner.relay = RelayDesk(db=self.db, bus=self.bus, registry=self.registry, runner=self.runner, projects=self.projects,
+                                      leash=self.leash, home=self.home, wait_seconds=float(o.get("tool_relay_minutes", 10)) * 60)
+        await self._fit_ceilings()                                           # A8.d.03
         self.orchestrator.keep_working = True                                # A15.d: work outlives a round in the app
         self.orchestrator.max_rounds = int(o.get("rounds_per_day", 8))
         self.orchestrator.leash = self.leash
@@ -573,6 +578,34 @@ class Engine:
         from omnibots import away
         d = await away.today(self.db, self.leash.paused)
         return {**d, "text": away.strip_text(d)}
+
+    def _tool_risk(self, name: str) -> str | None:
+        tool = self.runner.pool(boss=True).tools.get(name) or self.runner.pool().tools.get(name)
+        return tool.risk if tool else None
+
+    async def _fit_ceilings(self) -> list[str]:
+        """A8.d.03: the ceiling used to be stored and never read (the factory wrote R2 for everyone). Now that
+        it's enforced, a bot's ceiling is raised to the highest base risk of the tools it already has, so no
+        bot loses a tool it could use. Never lowered."""
+        order = ["R0", "R1", "R2", "R3", "R4", "R5"]
+        raised = []
+        for b in await self.registry.list():
+            need = max([order.index(r) for r in (self._tool_risk(t) for t in b.tools) if r in order] or [0])
+            have = order.index(b.risk_ceiling) if b.risk_ceiling in order else 0
+            if need > have:
+                await self.registry.update(b.id, risk_ceiling=order[need])
+                raised.append(f"{b.id}: {b.risk_ceiling} -> {order[need]}")
+        if raised:
+            await self.db.audit("system", None, "risk_ceilings_fitted", json.dumps(raised))
+        return raised
+
+    async def set_risk_ceiling(self, bot_id: str, ceiling: str) -> str:
+        """The user raises or lowers a bot's limit (for now through the pipe: --send ceiling --id <bot> --text R4)."""
+        if ceiling not in ("R0", "R1", "R2", "R3", "R4", "R5"):
+            raise ValueError("a ceiling is R0..R5")
+        await self.registry.update(bot_id, risk_ceiling=ceiling)
+        await self.db.audit("user", None, "risk_ceiling_set", json.dumps({"bot": bot_id, "ceiling": ceiling}))
+        return ceiling
 
     async def remove_routine(self, routine_id: str) -> str:
         await self.db.write("DELETE FROM routines WHERE id=?", (routine_id,))

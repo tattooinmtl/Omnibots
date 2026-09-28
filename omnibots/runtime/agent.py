@@ -40,6 +40,8 @@ MAX_PARSE_RECOVERIES = 3
 WORKER_PROMPT = """You are {name}, an OmniBots worker: a clone of Omi, specialised as a {role}.
 You work in your own workspace folder; relative paths in tools are resolved there.
 Work step by step with your tools. Run code with run_python (it runs in a sandbox), and check results before claiming success.
+MISSING A TOOL? Don't give up and don't guess: if the job needs a tool you don't have (e.g. run_shell, git_push, the browser),
+call request_tool(tool, args, why). Omi has a bot that holds it run it for you, and the result comes back to you.
 SKILLS: the team has a library of expert instructions (skills). Before you start, call find_skill with a few words about the
 task (e.g. "css modern website", "python tests"); if one fits, invoke_skill it and follow it. Load the skills listed for you below first.
 Keep answers short and concrete. When the task is done, reply with a brief report of what you did and the evidence (file names, command output). Do not call a tool after you are finished.
@@ -85,9 +87,11 @@ class BotAgent:
                  tools: ToolRegistry, approvals: ApprovalCenter, events: BotEvents, sandbox: Sandbox | None = None,
                  system_prompt: str | None = None, max_iterations: int = 40, priority: str = "work",
                  approval_timeout: float | None = None, seat_lease: bool | None = None, token_budget: int | None = None,
-                 budget=None):
+                 budget=None, risk_ceiling: str | None = None, summary_prefix: str = ""):
         self.bot_id, self.name, self.role = bot_id, name, role
         self.budget = budget                     # A9.c.02: security.budget.Budget (daily token caps, spend caps)
+        self.risk_ceiling = risk_ceiling         # A8.d.03: a tool whose base risk is above it is refused
+        self.summary_prefix = summary_prefix     # A8.d.02: "requested by X, run by Y: " on a relay job's lines and cards
         self.workspace = workspace
         workspace.mkdir(parents=True, exist_ok=True)
         self.router, self.chain = router, chain
@@ -393,7 +397,7 @@ class BotAgent:
             except ValueError:
                 args = {}
             tool = self.tools.get(name)
-            summary = tool.describe(args) if tool else name
+            summary = self.summary_prefix + (tool.describe(args) if tool else name)
             await ev.emit("console", f"▸ {summary}")
             parsed.append((call, name, args, tool, summary))
 
@@ -403,6 +407,13 @@ class BotAgent:
         for idx, (call, name, args, tool, summary) in enumerate(parsed):
             if tool is None:
                 allowed[idx] = None
+                continue
+            if self.risk_ceiling and RISK_ORDER.index(tool.risk) > RISK_ORDER.index(self.risk_ceiling):
+                # A8.d.03: the bot's limit is on what kind of tool it may use at all; a call that becomes riskier
+                # (outside the project, destructive) still goes to the user below, as before
+                allowed[idx] = (f"REFUSED: {name} is {tool.risk}, above your limit ({self.risk_ceiling}). Don't retry; ask Omi, "
+                                "or request_tool so a bot that may run it does it for you.")
+                await ev.emit("console", f"✖ above my limit ({tool.risk} > {self.risk_ceiling}): {summary}")
                 continue
             risk = tool.risk_for(args, ctx)
             # A15.e.04 (user, 2026-09-28): leaving the project folder always asks, whatever `ask_from` says
