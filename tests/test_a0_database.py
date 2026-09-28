@@ -24,6 +24,7 @@ EXPECTED_TABLES = {
     "spend_events",                                       # 002 (A9)
     "token_allocations",                                  # 003 (A9.c.03)
     "usage_daily",                                        # 004 (A16.c.04)
+    "verdicts",                                           # 006 (A16.b)
 }
 LATEST = len(list_migrations())
 

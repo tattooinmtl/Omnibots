@@ -1062,10 +1062,17 @@ _(empty)_
 - **A16.a.99** ✅ **Acceptance:** the corpus runs in the test suite and live; every case passes; a new case can be added as one file.
 
 #### A16.b — Your verdict on the work
-- **A16.b.01** ⏳ **👍 / 👎 plus an optional note** on each finished goal (REPORT.md / the goal's last message) and on each bot's accepted claim. Stored in SQL with project, job, bot, provider and playbook.
-- **A16.b.02** ⏳ **It counts more than self-grading**: a 👎 marks the playbook run failed whatever the retrospective said; the note goes into the bot's `memory.md` as a lesson from the user; the retrospective (A8.c.02) reads the verdicts first.
-- **A16.b.03** ⏳ **It shows**: per bot and per provider, the share of 👍 over time (feeds A13 and the bot editor).
-- **A16.b.99** ⏳ **Acceptance:** a 👎 with a note on a goal changes the next run of that playbook, and the bot's memory quotes the note.
+- **A16.b.01** ✅ **👍 / 👎 plus an optional note** on each finished goal (REPORT.md / the goal's last message) and on each bot's accepted claim. Stored in SQL with project, job, bot, provider and playbook.
+- **A16.b.02** ✅ **It counts more than self-grading**: a 👎 marks the playbook run failed whatever the retrospective said; the note goes into the bot's `memory.md` as a lesson from the user; the retrospective (A8.c.02) reads the verdicts first.
+- **A16.b.03** ✅ **It shows**: per bot and per provider, the share of 👍 over time (feeds A13 and the bot editor).
+- **A16.b.99** 🟡 **Acceptance:** a 👎 with a note on a goal changes the next run of that playbook, and the bot's memory quotes the note.
+
+**A16.b Notes:**
+- 2026-09-27 Claude: A16.b.01–03 PASSED (A16.b.99 needs a real goal: rate it 👎 with a note, then run the same kind of goal again)
+  - Files: `db/migrations/006_verdicts.sql` (`verdicts`: project, claim or NULL for the goal, bot, its provider, playbook, ±1, note), `orchestrator/verdicts.py` (`rate`, `card_data`, `recent_notes`, `stats`), `engine.py` (`rate`, `ui_verdict_card`, `verdict_stats`), `orchestrator/playbooks.py` (`retrospective(user_verdicts=)`: your verdicts go first in its prompt, and a successful run no longer skips learning when you said 👎), `orchestrator/goal.py` (passes the playbook's recent verdicts), `ui/widgets.py` (`VerdictCard`, `ChatView.add_verdict`), `ui/live.py` (when a goal's REPORT.md is written, Omi's chat asks "How did it go?" once per goal), `app.py` (`--send rate --id <project> --text "up|down[: note]"` or `"claim N up: …"`).
+  - Effects of a rating: 👎 on a goal → its playbook run `success = 0` (whatever the bots said); a note → "From the user (👍/👎): …" in that bot's Lessons (Omi's for the goal); a line on the project board; an audit row. `stats()` = share of 👍 per bot and per provider (for A13 and the bot editor).
+  - Tests: `tests/test_verdicts.py` (4: effects in the database and memory; the retrospective prompt starts with your verdicts; the card sends the clicked row with the note; `--send rate` on a real app process).
+  - Full suite: 459 passed, 1 failed, 26 skipped at ~97% CPU. The failure, `test_a9_approvals_budgets::test_panic_stop_halts_everything_within_two_seconds`, passes on its own (2/2, same load); it's the A9.99 safety timing (panic within 2 s), so it's left strict.
 
 #### A16.c — Backup, restore and housekeeping
 - **A16.c.01** ✅ **Daily backup of `~/.omnibots`** while the app runs: the database through SQLite's online backup API (safe with WAL), bot `memory.md` files, `settings.toml`, `user_profile.md`, sessions and skills. Kept in `~/.omnibots/backups/<date>/`, the last 7 (setting). Vault values stay in Windows Credential Manager and are never copied; only the index is.

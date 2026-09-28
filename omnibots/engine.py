@@ -514,6 +514,19 @@ class Engine:
                 log.exception("backup/housekeeping pass failed")
             await asyncio.sleep(check_every)
 
+    # ── your verdict on the work (A16.b) ───────────────────────────────────
+    async def rate(self, project_id: str, verdict: int, note: str = "", claim_id: int | None = None) -> dict[str, Any]:
+        from omnibots.orchestrator import verdicts
+        return await verdicts.rate(self.db, self.registry, self.bus, project_id=project_id, verdict=verdict, note=note, claim_id=claim_id)
+
+    async def ui_verdict_card(self, project_id: str) -> dict[str, Any]:
+        from omnibots.orchestrator import verdicts
+        return await verdicts.card_data(self.db, self.registry, project_id)
+
+    async def verdict_stats(self) -> dict[str, Any]:
+        from omnibots.orchestrator import verdicts
+        return await verdicts.stats(self.db)
+
     async def set_background_paused(self, on: bool) -> bool:
         return await self.leash.set_paused(on)
 
