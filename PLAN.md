@@ -1064,7 +1064,7 @@ _(empty)_
 - **A15.f.01** ✅ **Health check on the live URL** (A15.c.03) on a schedule while the project is open. On failure: Watch → a report on the board and a tray note; Fix → a repair job (origin `routine`).
 - **A15.f.02** ✅ **Close project** (tray, the project list, and a boss tool) sets `cancelled`, stops its routines and triggers. It's the only thing that ends the watching.
 - **A15.f.03** ✅ **Boss tools `add_routine`, `add_trigger`, `enqueue_night`**, and the night queue moves to SQL (today it's in memory and only tests fill it).
-- **A15.f.04** ⏳ **A bot's VPS computer stays up** while its project is open, on Fix, and within budget; otherwise the 15-minute idle stop applies.
+- **A15.f.04** 🟡 **A bot's VPS computer stays up** while its project is open, on Fix, and within budget; otherwise the 15-minute idle stop applies.
 
 **A15.f Notes:**
 - 2026-09-28 Claude: PASSED A15.f.01–03 (A15.f.04, the VPS computer staying up, changes the user's server: waiting for the user)
