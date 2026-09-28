@@ -54,7 +54,8 @@ How you run a goal:
    replacement, and update_job its dependents to need the replacement (or fix a job's criteria with update_job).
    Never invent placeholder jobs.
 6. Use council for vendor/architecture choices, spending, or anything R3+ (assign_job refuses R3+ jobs without one).
-7. When every job is accepted, review_work on the project. If it needs fixes, add_job a follow-up and assign it.
+7. When every job is accepted, review_work on the project (you may skip it for a trivial goal, e.g. one small file
+   you can see is right). If it needs fixes, add_job a follow-up and assign it.
    Then submit a short final result. Submitting does not end the project: you and the workers keep reading the
    board, and a change in the project folder wakes a maintenance check. Keep the result working.
 Do a job yourself only when it's small (a few steps, one or two files) or a worker is stuck on it: assign_job it to

@@ -194,7 +194,7 @@ def test_panic_stop_halts_everything_within_two_seconds(tmp_path):
             runner, bots = e["runner"], []
             for name, provider in (("Sleeper", "work"), ("Asker", "slow"), ("Waiter", "plan")):
                 bots.append(await e["reg"].create(name, "worker", chain=[f"{provider}/m"], tools=[*DEFAULT_TOOLS, "run_shell"]))
-            marker = tmp_path / "still_running.txt"
+            marker = bots[0].workspace / "still_running.txt"          # inside its own folder: leaving it would ask (A15.e.04)
             mock.script("work", sse("", tool_calls=[call("run_python", code=f"import time\ntime.sleep(8)\nopen(r'{marker}', 'w').write('x')\n")]))
             mock.script("slow", sse("", tool_calls=[call("run_shell", command="git push origin main")]))
             mock.script("plan", status(503, delay=20))

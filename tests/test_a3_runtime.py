@@ -141,7 +141,8 @@ def test_r3_parks_until_approved_then_runs(tmp_path):
         return parked, pending, dict(row), res, final["status"], h
 
     parked, pending, row, res, final, h = asyncio.run(go())
-    assert parked and pending[0]["risk"] == "R3" and row == {"risk_class": "R3", "status": "pending", "summary": f"write {outside} (12 chars)"}
+    assert parked and pending[0]["risk"] == "R3" and row == {"risk_class": "R3", "status": "pending",
+                                                                          "summary": f"leaves the project folder ({outside}): write {outside} (12 chars)"}
     assert res.status == "done" and outside.read_text() == "from the bot" and final == "approved"
     assert "waiting_approval" in h.states() and "⏸ waiting for your approval (R3" in h.console()
 
