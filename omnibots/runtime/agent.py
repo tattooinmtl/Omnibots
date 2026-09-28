@@ -81,6 +81,7 @@ class TurnResult:
     tool_calls: int = 0
     error: str | None = None
     models_used: list[str] = field(default_factory=list)
+    runs: list[dict[str, Any]] = field(default_factory=list)   # commands really run (ToolContext.runs), set by the runner
 
 
 class BotAgent:
@@ -180,6 +181,7 @@ class BotAgent:
         registry = build_param_registry(schemas)
         ctx = ToolContext(bot_id=self.bot_id, workspace=self.workspace, job_id=job_id, emit=ev.emit, sandbox=self.sandbox,
                           waiting_on_user=self.waiting_on_user)
+        self.last_runs = ctx.runs
         recoveries, nudged, total_calls, models = 0, False, 0, []
         last_step, repeats = None, 0                     # stuck-loop guard (A3.a.10)
         await ev.emit("console", f"▶ task: {task}")

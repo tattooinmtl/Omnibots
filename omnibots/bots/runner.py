@@ -390,6 +390,7 @@ class JobRunner:
             else:
                 result = await agent.run(task, job_id=job_id)
             status = _job_status(result.status)
+            result.runs = list(getattr(agent, "last_runs", []))
         except asyncio.TimeoutError:
             status, time_error = "blocked", f"time budget of {budget['seconds']}s used up"
         except asyncio.CancelledError:

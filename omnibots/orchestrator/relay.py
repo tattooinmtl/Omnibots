@@ -48,7 +48,7 @@ class RelayDesk:
 
     # ── the asking bot ─────────────────────────────────────────────────
     async def request(self, *, bot_id: str, job_id: str | None, project_id: str | None, tool: str,
-                      args: dict[str, Any], why: str, waiting_on_user=None) -> str:
+                      args: dict[str, Any], why: str, waiting_on_user=None, record=None) -> str:
         known = self.runner.pool(boss=False).tools
         if tool in BOSS_ONLY:
             return f"ERROR: {tool} can't be relayed"
@@ -64,7 +64,7 @@ class RelayDesk:
         rid = f"tr_{uuid.uuid4().hex[:8]}"
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self.open[rid] = {"id": rid, "bot_id": bot_id, "job_id": job_id, "project_id": project_id, "tool": tool,
-                          "args": args, "why": why, "future": fut, "at": time.time()}
+                          "args": args, "why": why, "future": fut, "at": time.time(), "record": record}
         await self.bus.publish(topic_project(project_id) if project_id else topic_bot(BOSS_ID), "TOOL_REQUEST",
                                {"text": f"Tool request {rid}: {bot_id} asks for someone to run {tool}({json.dumps(args)[:300]}) "
                                         f"because: {why[:300]}",
@@ -124,6 +124,12 @@ class RelayDesk:
             outputs = [m.get("content") or "" for m in (res.messages if res else []) if m.get("role") == "tool"]
             answer = (res.answer if res else "") or ""
             full = "\n\n".join(outputs + ([f"{holder_id}: {answer}"] if answer else [])) or f"{holder_id} ran nothing ({out.status})"
+            # Found live in A14.a.06: a tests bot got its tests run through the relay, then its claim was rejected
+            # ("you did not run it in this job") twice and the job blocked. What the holder REALLY ran (its tool's own
+            # record, never a bot's typed answer) counts as the asker's run, marked as relayed.
+            if req.get("record") and res is not None:
+                for run in res.runs:
+                    req["record"]({**run, "relayed_by": holder_id})
             await self._close(req["id"], full, by=holder_id)
         except Exception as exc:                          # the asking bot must hear back either way
             await self._close(req["id"], f"no answer: the relay failed ({exc})", tell_omi=True)
@@ -180,7 +186,8 @@ class _nullctx:
 def request_tool_tool(desk: RelayDesk, *, project_id: str | None) -> Tool:
     async def request_tool(args: dict[str, Any], ctx: ToolContext) -> str:
         return await desk.request(bot_id=ctx.bot_id, job_id=ctx.job_id, project_id=project_id, tool=str(args.get("tool") or ""),
-                                  args=dict(args.get("args") or {}), why=str(args.get("why") or ""), waiting_on_user=ctx.waiting_on_user)
+                                  args=dict(args.get("args") or {}), why=str(args.get("why") or ""), waiting_on_user=ctx.waiting_on_user,
+                                  record=ctx.runs.append)
     return Tool("request_tool", "Ask for the USE of a tool you don't have: Omi has a bot that holds it run it for you, and the "
                 "answer comes back here (you wait for it). Say why. Your own tools you just call.",
                 {"type": "object", "properties": {"tool": {"type": "string"}, "args": {"type": "object"}, "why": {"type": "string"}},

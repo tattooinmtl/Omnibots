@@ -167,3 +167,47 @@ def test_omi_can_see_the_request_id_and_a_wrong_id_names_the_open_ones(tmp_path)
     assert wrong.startswith("ERROR") and rid in wrong and "run_shell" in wrong
     assert right == f"answered {rid}" and "Microsoft Windows" in got
     assert "None are open" in none_open
+
+
+def test_a_relayed_run_counts_as_evidence_but_a_typed_answer_does_not(tmp_path):
+    """Found live in A14.a.06: the tests bot's tests were run through the relay, then its claim was rejected twice
+    ("you did not run it in this job") and the job blocked."""
+    from omnibots.board.ledger import EvidenceError, check_evidence
+
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            desk = RelayDesk(db=e["db"], bus=e["bus"], registry=e["reg"], runner=e["runner"], projects=e["projects"], home=tmp_path)
+            asker = await e["reg"].create("Tester", "tester", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            holder = await e["reg"].create("Shell", "devops", chain=["plan/m"], tools=[*DEFAULT_TOOLS, "run_shell"], risk_ceiling="R3")
+            pid = await e["projects"].create("a site")
+            mock.script("plan", sse("", tool_calls=[call("run_shell", command="echo relayed-ok")]), sse("It printed relayed-ok."))
+            relayed_runs, typed_runs = [], []
+            ask = asyncio.create_task(desk.request(bot_id=asker.id, job_id="j1", project_id=pid, tool="run_shell",
+                                                   args={"command": "echo relayed-ok"}, why="evidence", record=relayed_runs.append))
+            for _ in range(300):
+                await asyncio.sleep(0.02)
+                if desk.waiting(pid):
+                    break
+            await desk.relay(desk.waiting(pid)[0]["id"], holder.id)
+            await asyncio.wait_for(ask, 60)
+            ask2 = asyncio.create_task(desk.request(bot_id=asker.id, job_id="j2", project_id=pid, tool="run_shell",
+                                                    args={"command": "echo typed"}, why="evidence", record=typed_runs.append))
+            for _ in range(300):
+                await asyncio.sleep(0.02)
+                if desk.waiting(pid):
+                    break
+            await desk.answer(desk.waiting(pid)[0]["id"], "EXIT 0\ntyped")          # Omi's word, not a run
+            await ask2
+            await e["db"].close()
+            return relayed_runs, typed_runs, holder
+    relayed, typed, holder = run(go())
+    assert relayed and relayed[0]["relayed_by"] == holder.id and relayed[0]["exit_code"] == 0 and "relayed-ok" in relayed[0]["output"]
+    (ok,) = check_evidence([{"kind": "test", "ref": "echo relayed-ok", "exit_code": 0}], None, relayed)
+    assert ok["detail"]["verified"] is True
+    assert typed == []
+    try:
+        check_evidence([{"kind": "test", "ref": "echo typed", "exit_code": 0}], None, typed)
+        raise AssertionError("a typed answer must not count as a run")
+    except EvidenceError:
+        pass
