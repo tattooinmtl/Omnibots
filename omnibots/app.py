@@ -14,6 +14,7 @@ import json
 import time
 import logging
 import os
+import re
 import sys
 
 from PySide6.QtCore import QTimer
@@ -201,6 +202,16 @@ def main(argv: list[str] | None = None) -> int:
             return {"ok": True, "clicked": act.text()}
         return {"ok": True, "rebuild_ms": ms, "tooltip": tray.icon.toolTip(), "visible": tray.icon.isVisible(), "menu": items(tray.menu)}
 
+    def cmd_rate(msg):
+        # --send rate --id <project_id> --text "up: nice work"   (or "down: …"; "claim 12 up: …" rates one claim)
+        m = re.match(r"\s*(?:claim\s+(\d+)\s+)?(up|down|👍|👎)\s*:?\s*(.*)", str(msg.get("text") or ""), re.S | re.I)
+        pid = str(msg.get("id") or "")
+        if not m or not pid:
+            return {"ok": False, "error": "rate needs --id <project_id> and --text 'up|down[: note]' (or 'claim N up: …')"}
+        verdict = 1 if m.group(2).lower() in ("up", "👍") else -1
+        claim = int(m.group(1)) if m.group(1) else None
+        return later(engine.rate(pid, verdict, m.group(3).strip(), claim), lambda r: {"ok": True, **r}, timeout=10)
+
     def cmd_budget(_msg):
         return later(engine.budget.snapshot(), lambda b: {"ok": True, "budget": b}, timeout=10)
 
@@ -215,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:
          "pause": team_cmd("pause"), "resume": team_cmd("resume"), "halt": team_cmd("stop"), "start": team_cmd("start"),
          "restart": team_cmd("restart"), "panic": lambda m: later(engine.team.stop(panic=True), lambda r: {"ok": True, **r}, timeout=60),
          "pause_bot": team_cmd("pause_bot"), "resume_bot": team_cmd("resume_bot"), "stop_bot": team_cmd("stop_bot"),
-         "preapprove": cmd_preapprove, "budget": cmd_budget, "snapshot": cmd_snapshot, "tray": cmd_tray},
+         "preapprove": cmd_preapprove, "budget": cmd_budget, "rate": cmd_rate, "snapshot": cmd_snapshot, "tray": cmd_tray},
     )
     if not instance.acquire():
         reply = send_command({"cmd": "show"})

@@ -614,6 +614,20 @@ class ChatPanel(GlassPanel):
             row.addWidget(you, 0, Qt.AlignmentFlag.AlignTop)
         self.col.insertLayout(self.col.count() - 1, row)
 
+    def add_verdict(self, data: dict, on_rate) -> "VerdictCard":
+        """A16.b: after a goal, your 👍 / 👎 on it and on each bot's accepted work."""
+        card = VerdictCard(data, on_rate)
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        face = QLabel()
+        face.setPixmap(mini_face(self.accent, mood="happy", px=52, badge=self.badge))
+        face.setAlignment(Qt.AlignmentFlag.AlignTop)
+        row.addWidget(face, 0, Qt.AlignmentFlag.AlignTop)
+        row.addWidget(card, 1)
+        row.addSpacing(60)
+        self.col.insertLayout(self.col.count() - 1, row)
+        return card
+
     def add_approval(self, info: dict, on_decide) -> "ApprovalCard":
         """A bot is waiting for your OK (A11.e.01): a card in its chat with Approve / Deny."""
         card = ApprovalCard(info, on_decide)
@@ -627,6 +641,82 @@ class ChatPanel(GlassPanel):
         row.addSpacing(60)
         self.col.insertLayout(self.col.count() - 1, row)
         return card
+
+
+class VerdictCard(QFrame):
+    """How did it go? 👍 / 👎 on the goal and on each bot's accepted claim, with one optional note box:
+    a thumb sends its row with the note (then the box clears). `on_rate(project_id, claim_id, verdict,
+    note, done)`; `done(ok, text)` marks the row."""
+
+    def __init__(self, data: dict, on_rate, parent=None):
+        super().__init__(parent)
+        self.data, self.on_rate = data, on_rate
+        self.rows: dict = {}                              # claim_id (None = the goal) -> (up, down, state label)
+        self.setObjectName("verdict")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"QFrame#verdict {{ background: {theme.BG2}; border: 1px solid {theme.BORDER_GLOW}; border-radius: 14px; }}")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(16, 12, 16, 12)
+        v.setSpacing(8)
+        head = QLabel(f"<b>How did it go?</b>  <span style='color:{theme.TEXT_DIM}'>{str(data.get('goal', ''))[:90]}</span>")
+        head.setWordWrap(True)
+        head.setStyleSheet("font-size: 14px; background: transparent;")
+        v.addWidget(head)
+        hint = QLabel("Your rating counts more than the bots' own: 👎 marks this recipe as failed, and a note becomes a lesson "
+                      "in the bot's memory.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 12px; background: transparent;")
+        v.addWidget(hint)
+        v.addLayout(self._row(None, "The whole goal", data.get("verdict")))
+        for c in data.get("claims", []):
+            v.addLayout(self._row(c["id"], f"<b>{c['bot_name']}</b>: {c['text'][:110]}", c.get("verdict")))
+        self.note = QLineEdit()
+        self.note.setPlaceholderText("Optional note (what to repeat, what to do differently)…")
+        v.addWidget(self.note)
+
+    def _row(self, claim_id, label: str, given) -> QHBoxLayout:
+        h = QHBoxLayout()
+        text = QLabel(label)
+        text.setWordWrap(True)
+        text.setStyleSheet("font-size: 13px; background: transparent;")
+        h.addWidget(text, 1)
+        state = QLabel("")
+        state.setStyleSheet(f"color: {theme.TEXT_DIM}; background: transparent;")
+        h.addWidget(state)
+        up, down = QPushButton("👍"), QPushButton("👎")
+        for b, val in ((up, 1), (down, -1)):
+            b.setFixedWidth(46)
+            b.setToolTip("Good work" if val > 0 else "Not good (say why in the note)")
+            b.clicked.connect(lambda _=False, cid=claim_id, vv=val: self.rate(cid, vv))
+            h.addWidget(b)
+        self.rows[claim_id] = (up, down, state)
+        if given in (1, -1):
+            self.mark(claim_id, given, "rated")
+        return h
+
+    def rate(self, claim_id, verdict: int) -> None:
+        up, down, state = self.rows[claim_id]
+        up.setEnabled(False)
+        down.setEnabled(False)
+        state.setText("saving…")
+        note = self.note.text().strip()
+        self.note.clear()
+        self.on_rate(self.data["project_id"], claim_id, verdict, note,
+                     lambda ok, text: self.mark(claim_id, verdict, text) if ok else self._failed(claim_id, text))
+
+    def mark(self, claim_id, verdict: int, text: str = "") -> None:
+        up, down, state = self.rows[claim_id]
+        up.setEnabled(False)
+        down.setEnabled(False)
+        chosen = up if verdict > 0 else down
+        chosen.setStyleSheet(f"QPushButton {{ background: {theme.GREEN if verdict > 0 else theme.AMBER}; border-radius: 8px; }}")
+        state.setText(text or "rated")
+
+    def _failed(self, claim_id, text: str) -> None:
+        up, down, state = self.rows[claim_id]
+        up.setEnabled(True)
+        down.setEnabled(True)
+        state.setText(f"✖ {text}"[:80])
 
 
 class ApprovalCard(QFrame):

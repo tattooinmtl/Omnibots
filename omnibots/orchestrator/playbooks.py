@@ -188,17 +188,21 @@ def _json_obj(text: str) -> dict[str, Any] | None:
 
 
 async def retrospective(*, router, chain: list[str], store: PlaybookStore, boss_memory, goal: str, report: str,
-                        success: bool, project_id: str, playbook: Playbook | None, tokens: int, seconds: float) -> dict[str, Any]:
+                        success: bool, project_id: str, playbook: Playbook | None, tokens: int, seconds: float,
+                        user_verdicts: list[str] | None = None) -> dict[str, Any]:
     """Record the playbook run, learn lessons, create or improve a playbook. Never raises."""
     out: dict[str, Any] = {"lessons": [], "playbook": None, "recorded": False}
     try:
         if playbook:
             await store.record_run(playbook.id, project_id=project_id, success=success, tokens=tokens, seconds=seconds)
             out["recorded"] = True
-        if success and playbook:
-            return out                  # the recipe worked as written; its stats say so
+        if success and playbook and not any(v.startswith("👎") for v in user_verdicts or []):
+            return out                  # the recipe worked as written; its stats say so (and you haven't said otherwise)
         from omnibots.runtime.context import today_line
         user = [f"GOAL:\n{goal}", f"OUTCOME: {'succeeded' if success else 'did not succeed'}", f"REPORT:\n{report[:12000]}"]
+        if user_verdicts:               # A16.b.02: the user's own verdicts count more than the bots' self-grading
+            user.insert(0, "THE USER'S VERDICTS ON EARLIER RUNS OF THIS PLAYBOOK (newest first; they outweigh the bots' own "
+                           "grading):\n" + "\n".join(f"- {v}" for v in user_verdicts))
         if playbook:
             user.append(f"PLAYBOOK THAT WAS FOLLOWED ({playbook.name} v{playbook.version}, {playbook.stats_line()}):\n{playbook.body_md}")
         routed = await router.chat("omi:retro", chain, [{"role": "system", "content": RETRO_PROMPT + "\n" + today_line()},

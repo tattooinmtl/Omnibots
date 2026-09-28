@@ -57,6 +57,7 @@ class LiveUI(QObject):
         self._refreshing = False
         self.engine = engine
         self.windows: dict[str, Any] = {}
+        self._verdict_asked: set[str] = set()                   # A16.b: one "How did it go?" card per goal
         self.bots: dict[str, dict[str, Any]] = {}
         self._stream_kind: dict[str, str | None] = {}          # bot -> kind of the open streamed line
         self._last_quip: dict[str, float] = {}
@@ -448,6 +449,24 @@ class LiveUI(QObject):
                 (m.get("recipient_id") == bot or (bot == "omi" and t == "TASK_RECEIVED")):
             w.chat.add(ChatMessage("user", str(p.get("text") or "")[:4000]))
 
+    def ask_verdict(self, project_id: str) -> None:
+        if project_id in self._verdict_asked or "omi" not in self.windows or not hasattr(self.engine, "ui_verdict_card"):
+            return
+        self._verdict_asked.add(project_id)
+
+        def got(data, err):
+            if err is None and data and "omi" in self.windows:
+                self.windows["omi"].chat.add_verdict(data, self.rate)
+        self._later(self.engine.ui_verdict_card(project_id), got)
+
+    def rate(self, project_id: str, claim_id, verdict: int, note: str, done) -> None:
+        def got(r, err):
+            if err is not None:
+                done(False, str(err))
+            else:
+                done(True, "thanks" + (" · " + "; ".join(r.get("effects", [])) if r.get("effects") else ""))
+        self._later(self.engine.rate(project_id, verdict, note, claim_id), got)
+
     def on_board_message(self, m: dict[str, Any]) -> None:
         if m.get("type") in NOISE:
             return                                                # too chatty for the board view
@@ -462,6 +481,9 @@ class LiveUI(QObject):
             if target in self.windows and (target, text) not in self._typed:
                 self._chat_from(target, self.windows[target], m)
             self._typed.discard((target, text))                     # typed in that window: already shown there
+        # A16.b: a goal wrote its REPORT.md → ask how it went, in Omi's chat
+        if m.get("type") == "ARTIFACT_READY" and (m.get("payload") or {}).get("text") == "REPORT.md" and m.get("project_id"):
+            self.ask_verdict(m["project_id"])
         # a new goal: Omi's file explorer follows the project it works in
         if m.get("type") == "TASK_RECEIVED" and "omi" in self.windows and m.get("project_id"):
             def omi_files():

@@ -134,7 +134,9 @@ class Orchestrator:
             "SELECT SUM(COALESCE(e.tokens_in,0)+COALESCE(e.tokens_out,0)) AS tok FROM provider_usage_events e "
             "JOIN jobs j ON j.id = e.job_id WHERE j.project_id=?", (pid,))
         boss = await self.registry.get(BOSS_ID)
-        self.last_retro = await retrospective(router=self.router, chain=self.retro_chain, store=self.playbooks,
+        from omnibots.orchestrator.verdicts import recent_notes
+        mine = await recent_notes(self.db, ctx.playbook.id if ctx.playbook else None)
+        self.last_retro = await retrospective(user_verdicts=mine, router=self.router, chain=self.retro_chain, store=self.playbooks,
                                               boss_memory=boss.memory, goal=ctx.goal, report=report, success=success,
                                               project_id=pid, playbook=ctx.playbook, tokens=int((row["tok"] if row else 0) or 0),
                                               seconds=out.seconds)
