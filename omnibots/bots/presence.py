@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable
 from omnibots.board.a2a import Inbox
 from omnibots.board.query import query
 from omnibots.board.types import topic_project
-from omnibots.bots.leash import Leash
+from omnibots.bots.leash import Leash, child_origin
 from omnibots.bots.profile import BOSS_ID
 from omnibots.orchestrator.boss_tools import BossToolkit, GoalContext
 
@@ -109,6 +109,7 @@ class TeamPresence:
         self._maintaining: set[str] = set()
         self._maint_tasks: dict[str, asyncio.Task] = {}
         self._notes: dict[str, list[str]] = {}
+        self._boss_notes: dict[str, list] = {}          # bot_id -> Omi's messages (Message) waiting for an idle worker
         self.polls = 0
 
     def busy(self, bot_id: str) -> bool:
@@ -155,6 +156,7 @@ class TeamPresence:
                 if not self._paused():
                     await self._pickup_ready(bot_id)
                     await self._flush_notes(bot_id)
+                    await self._flush_boss_notes(bot_id)
                     if bot_id == BOSS_ID:
                         await self._watch_files()
         finally:
@@ -170,6 +172,11 @@ class TeamPresence:
             text = m.text().strip()
             if text:
                 self._notes.setdefault(bot_id, []).append(text)
+        elif (m.message_type == "A2A_MESSAGE" and m.recipient_id == bot_id and m.sender_id == BOSS_ID
+              and bot_id != BOSS_ID and not self.busy(bot_id) and m.text().strip()):
+            # A15.a.06: send_message tells Omi an idle worker "will see this"; now it does. (A worker
+            # inside a job reads it through its own inbox, so only idle workers are woken here.)
+            self._boss_notes.setdefault(bot_id, []).append(m)
 
     async def _pickup_ready(self, bot_id: str) -> None:
         if self.busy(bot_id):
@@ -223,6 +230,25 @@ class TeamPresence:
             raise
         except Exception:
             log.exception("pickup failed for %s", bot_id)
+
+    async def _flush_boss_notes(self, bot_id: str) -> None:
+        msgs = self._boss_notes.get(bot_id)
+        if not msgs or self.busy(bot_id):
+            return
+        first = msgs[0]
+        origin = "user"
+        if first.job_id:                       # Omi's own job says who started this: your goal, or a check (→ a fix)
+            row = await self.db.read_one("SELECT origin FROM jobs WHERE id=?", (first.job_id,))
+            origin = child_origin(row["origin"]) if row else "user"
+        if self.leash and await self.leash.may_start(origin, first.project_id):
+            return                             # held by the dial or the pause: kept until it's allowed
+        self._boss_notes[bot_id] = []
+        text = ("Omi wrote to you on the board while you weren't in a job:\n" + "\n".join(m.text().strip() for m in msgs)
+                + "\n\nDo what Omi asks, then answer Omi with send_message (and submit_claim if it's a result).")
+        folder = self.projects.folder(first.project_id) if first.project_id else None
+        self._jobs[bot_id] = asyncio.create_task(
+            self.runner.run(bot_id, text, title=f"Omi: {msgs[0].text().strip()[:70]}", project_id=first.project_id,
+                            workspace=folder, origin=origin), name=f"boss-note-{bot_id}")
 
     async def _flush_notes(self, bot_id: str) -> None:
         notes = self._notes.get(bot_id)

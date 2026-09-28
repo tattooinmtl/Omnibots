@@ -13,6 +13,7 @@ from pathlib import Path
 import json
 import time
 import logging
+import os
 import sys
 
 from PySide6.QtCore import QTimer
@@ -38,12 +39,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--id", default="", help="bot id for --send tell/pause_bot/resume_bot/stop_bot")
     p.add_argument("--exit-after", type=float, default=0, metavar="SECONDS", help="exit cleanly after N seconds")
     p.add_argument("--no-window", action="store_true", help="don't show the main window")
+    p.add_argument("--wait-pid", type=int, default=0, metavar="PID", help=argparse.SUPPRESS)   # a restart waits for the old instance
     p.add_argument("--version", action="version", version=f"omnibots {__version__}")
     return p.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
+    if args.wait_pid:
+        from omnibots.backup import wait_for_pid
+        wait_for_pid(args.wait_pid)
     paths = get_paths()
     settings = load_settings(paths.settings_file)
     setup_logging(paths.logs, settings["app"]["log_level"])
@@ -91,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=output or None,
         approvals_ask_from=str(settings.get("approvals", {}).get("ask_from", "R4")),
         skill_folders=list(settings.get("skills", {}).get("folders", [])),
+        backup_settings=settings.get("backup", {}),
     )
 
     def cmd_show(_msg):
@@ -218,6 +224,11 @@ def main(argv: list[str] | None = None) -> int:
         return ALREADY_RUNNING
 
     log.info("OmniBots %s starting (home=%s)", __version__, paths.home)
+    # A16.c.03: a restore chosen in the tray happens now, before the database is opened
+    from omnibots.backup import apply_pending_restore
+    restored = apply_pending_restore(paths.home, int(settings.get("backup", {}).get("keep", 7)))
+    if restored:
+        log.info("backup: %s", restored)
 
     # ── A11.m.01: where the bots' projects go, asked once on the first real start ──
     # (headless and timed test runs never ask; their projects stay inside their own home)
@@ -283,7 +294,16 @@ def main(argv: list[str] | None = None) -> int:
             from omnibots.ui.bot_window import BotWindow
             from omnibots.ui.tray import Tray
 
-            tray = Tray(engine, live)
+            def restart_app() -> None:
+                """Start a fresh instance that waits for this one to exit, then quit (A16.c.03)."""
+                import subprocess
+                subprocess.Popen([sys.executable, "-m", "omnibots", "--wait-pid", str(os.getpid())],
+                                 creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+                app.quit()
+
+            tray = Tray(engine, live, restart_app=restart_app, home=paths.home)
+            if restored:
+                QTimer.singleShot(1500, lambda: tray.icon.showMessage("OmniBots", f"Backup: {restored}"))
             tray.show()
             window.quit_on_close = False
             app.setQuitOnLastWindowClosed(False)

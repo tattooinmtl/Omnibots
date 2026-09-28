@@ -29,7 +29,8 @@ from pathlib import Path
 from typing import Any
 
 from omnibots.runtime.tools import Tool, ToolContext
-from omnibots.runtime.web_tools import UNTRUSTED, assert_public_url, html_to_text
+from omnibots.runtime.web_tools import assert_public_url, html_to_text
+from omnibots.security.untrusted import wrap
 
 MAX_TEXT = 12000
 
@@ -94,8 +95,9 @@ async def _describe_page(page) -> str:
             return {i, type, label};
         }).filter(c => c.label || c.type.startsWith('input'))""")
     lines = [f"[{c['i']}] {c['type']} — {c['label']}" for c in controls]
-    return (f"{UNTRUSTED}\nURL: {page.url}\nTITLE: {title}\n\n{body}\n\n"
-            f"INTERACTIVE ELEMENTS (use the [n] index with click/type):\n" + "\n".join(lines))
+    # the element labels are page text too: inside the wrapper (A16.a)
+    return wrap(f"{body}\n\nINTERACTIVE ELEMENTS (use the [n] index with click/type):\n" + "\n".join(lines),
+                source=str(page.url), header=f"TITLE: {title}")
 
 
 async def _nth(page, index: int):

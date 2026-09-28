@@ -90,8 +90,9 @@ class Database:
 
     BATCH_MAX = 500
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, backup_home: Path | None = None, backup_keep: int = 7):
         self.path = path
+        self.backup_home, self.backup_keep = backup_home, backup_keep   # A16.c: None = no backups (tests)
         self._write_exec = ThreadPoolExecutor(max_workers=1, thread_name_prefix="db-writer")
         self._read_exec = ThreadPoolExecutor(max_workers=4, thread_name_prefix="db-reader")
         self._conn: sqlite3.Connection | None = None
@@ -106,6 +107,7 @@ class Database:
 
         def _open() -> int:
             self._conn = open_connection(self.path)
+            self._backup_before_migrating()
             return apply_migrations(self._conn)
 
         self.schema_version = await loop.run_in_executor(self._write_exec, _open)
@@ -128,6 +130,56 @@ class Database:
         self._write_exec.shutdown(wait=True)
         self._read_exec.shutdown(wait=True)
         log.info("database closed")
+
+    def _backup_before_migrating(self) -> None:
+        """A16.c.02: a database that's about to change shape is copied first (a failed migration
+        then leaves nothing lost)."""
+        if self.backup_home is None or self._conn is None:
+            return
+        current = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        if 0 < current < len(list_migrations()):
+            from omnibots import backup
+            dest = backup.new_backup_folder(self.backup_home, "before-migration")
+            backup.copy_db(self._conn, dest / backup.DB_REL)
+            backup.finish_backup(self.backup_home, dest, "before-migration", self.backup_keep)
+            log.info("schema v%d → v%d: backed up first to %s", current, len(list_migrations()), dest)
+
+    # ── backup and housekeeping (A16.c) ────────────────────────────────
+    async def backup_to(self, home: Path, reason: str, keep: int = 7) -> Path:
+        """A consistent copy of the live database plus the files around it. Runs on the writer
+        thread, so it sits between writes instead of racing them."""
+        from omnibots import backup
+
+        def _go() -> Path:
+            assert self._conn is not None
+            dest = backup.new_backup_folder(home, reason)
+            backup.copy_db(self._conn, dest / backup.DB_REL)
+            return backup.finish_backup(home, dest, reason, keep)
+        return await asyncio.get_running_loop().run_in_executor(self._write_exec, _go)
+
+    async def housekeeping(self, retention_days: float, audit_days: float, *, vacuum: bool = False) -> dict[str, int]:
+        """Roll old usage into usage_daily, delete old messages / events / usage / audit rows, and
+        optionally VACUUM. Returns rows deleted per table."""
+        from omnibots.backup import HOUSEKEEPING, cutoff_iso
+        params = {"cutoff": cutoff_iso(retention_days), "audit_cutoff": cutoff_iso(audit_days)}
+        tables = ("usage_daily", "provider_usage_events", "messages", "bot_events", "audit_logs")
+
+        def _go() -> dict[str, int]:
+            conn = self._conn
+            assert conn is not None
+            out: dict[str, int] = {}
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                for table, sql in zip(tables, HOUSEKEEPING):
+                    out[table] = conn.execute(sql, params).rowcount
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            if vacuum:
+                conn.execute("VACUUM")
+            return out
+        return await asyncio.get_running_loop().run_in_executor(self._write_exec, _go)
 
     # ── writes ─────────────────────────────────────────────────────────
     async def write(self, sql: str, params: Sequence[Any] | dict[str, Any] = ()) -> int:

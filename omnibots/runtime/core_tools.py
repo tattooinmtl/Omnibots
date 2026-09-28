@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from omnibots.security.untrusted import FILE, wrap
 from omnibots.runtime.tools import Tool, ToolContext, ToolRegistry
 
 MAX_READ = 60_000
@@ -73,7 +74,8 @@ async def read_file(args: dict[str, Any], ctx: ToolContext) -> str:
     body = "\n".join(f"{i + 1:>5}  {l}" for i, l in enumerate(lines[offset:offset + limit], start=offset))
     if len(body) > MAX_READ:
         body = body[:MAX_READ] + "\n…[truncated; use offset/limit]"
-    return f"{_rel(ctx, path)} ({len(lines)} lines)\n{body}"
+    # a file's text is data, never instructions, like a web page (PLAN.md §3.3, A16.a)
+    return wrap(body, kind=FILE, source=f"{_rel(ctx, path)} ({len(lines)} lines)")
 
 
 NEWLINE_EXT = {".html", ".htm", ".css", ".scss", ".less", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".vue", ".py", ".md",

@@ -30,6 +30,17 @@ install_root = ""
 [engine]
 shutdown_timeout_seconds = 10
 
+[backup]
+# PLAN.md A16.c. A backup of ~/.omnibots (database, bots' memory, settings, sessions, skills; never
+# secrets or browser profiles) every `every_hours`, and before every database upgrade.
+# The newest `keep` of each kind are kept (tray → Backups → Restore…).
+every_hours = 24
+keep = 7
+# Housekeeping (weekly, while the team is idle): board messages, bot events and usage rows older than
+# retention_days are deleted (usage is kept as daily totals); the audit log keeps audit_days.
+retention_days = 90
+audit_days = 365
+
 [keep_awake]
 enabled = true
 

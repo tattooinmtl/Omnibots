@@ -23,6 +23,7 @@ EXPECTED_TABLES = {
     "locks", "parameters", "audit_logs",
     "spend_events",                                       # 002 (A9)
     "token_allocations",                                  # 003 (A9.c.03)
+    "usage_daily",                                        # 004 (A16.c.04)
 }
 LATEST = len(list_migrations())
 
