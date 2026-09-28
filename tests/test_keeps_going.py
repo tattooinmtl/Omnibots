@@ -198,3 +198,47 @@ def test_a_bigger_goal_gets_its_review_even_when_omi_skipped_it(tmp_path):
     v_big, v_again, v_small, reviews = run(go())
     assert v_big == "PASS" and v_again is None and v_small is None
     assert len(reviews) == 1 and "automatic: Omi skipped the review" in reviews[0]
+
+
+def test_the_automatic_review_sees_uncommitted_work(tmp_path):
+    """Found live in A14.a.02: Omi deleted a risky helper script without committing, the review diffed HEAD and
+    FAILed on a file that was already gone."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            orch = e["orch"]
+            orch.planner_chain = ["plan/m"]
+            mock.script("plan", sse("VERDICT: PASS\nfindings: none"))
+            pid = await e["projects"].create("a to-do app")
+            folder = e["projects"].folder(pid)
+            for name in ("app.py", "index.html", "test_app.py", "_danger.py"):
+                (folder / name).write_text(f"# {name}\n", encoding="utf-8")
+            await e["projects"].commit(pid, "the team's work", author="bot")
+            (folder / "_danger.py").unlink()                               # Omi's clean-up, not committed yet
+            (folder / "README.md").write_text("# readme\n", encoding="utf-8")
+            await orch._review_if_skipped(pid, SimpleNamespace(goal="a to-do app"))
+            sent = mock.requests[-1]["body"]["messages"][-1]["content"]
+            await e["db"].close()
+            return sent
+    sent = run(go())
+    assert "README.md" in sent                                             # the reviewer saw the latest tree
+    assert "+# _danger.py" not in sent                                     # not the deleted file as if it were there
+
+
+def test_build_junk_stays_out_of_the_project_history(tmp_path):
+    """Found live in A14.a.02: __pycache__/*.pyc was committed with the bots' work."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            pid = await e["projects"].create("a to-do app")
+            folder = e["projects"].folder(pid)
+            (folder / "__pycache__").mkdir()
+            (folder / "__pycache__" / "app.cpython-312.pyc").write_bytes(b"junk")
+            (folder / "app.py").write_text("print(1)\n", encoding="utf-8")
+            await e["projects"].commit(pid, "the team's work", author="bot")
+            diff = await e["projects"].diff(pid)
+            await e["db"].close()
+            return diff, sorted(p.name for p in folder.iterdir())
+    diff, names = run(go())
+    assert "app.py" in diff and ".pyc" not in diff
+    assert ".gitignore" not in names                                     # nothing written into the user's folder

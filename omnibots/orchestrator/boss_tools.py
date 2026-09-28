@@ -35,6 +35,7 @@ from omnibots.orchestrator.council import hold_council
 from omnibots.orchestrator.factory import KNOWN_TOOLS, BotFactory, SpawnRefused
 from omnibots.orchestrator.planner import PlanError, make_plan
 from omnibots.runtime.review import REVIEWER_PROMPT, review
+from omnibots.runtime.sandbox import PY_FLAGS
 from omnibots.runtime.tools import RISK_ORDER, Tool, ToolContext
 
 R3 = RISK_ORDER.index("R3")
@@ -269,7 +270,7 @@ class BossToolkit:
                 notes.append(f"{ran}: not re-run (inline code isn't kept; ask for tests in a file)")
                 continue
             if ran.startswith("python ") and (self.c.folder / ran[7:].strip()).is_file():
-                argv: list[str] | str = [sys.executable, "-I", str(self.c.folder / ran[7:].strip())]
+                argv: list[str] | str = [sys.executable, *PY_FLAGS, str(self.c.folder / ran[7:].strip())]
                 res = await sandbox.run(argv, cwd=self.c.folder, timeout=300, grant=[sandbox.new_run_dir(BOSS_ID)])
             else:
                 res = await sandbox.run(ran, cwd=self.c.folder, timeout=300)
@@ -415,6 +416,8 @@ class BossToolkit:
         return f"claim #{cid} rejected; {target} restarted on {job.id} with your new instructions"
 
     async def review_work(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        # found live in A14.a.02: Omi's own edits aren't committed until the report, so the reviewer judged a stale tree
+        await self.projects.commit(self.c.project_id, "work before review", author=BOSS_ID)
         diff = await self.projects.diff(self.c.project_id)
         if not diff.strip():
             return "nothing to review yet (no changes in the project)"

@@ -29,6 +29,22 @@ GIT_ENV = {"GIT_AUTHOR_NAME": "OmniBots", "GIT_AUTHOR_EMAIL": "bots@omnibots.loc
            "GIT_COMMITTER_NAME": "OmniBots", "GIT_COMMITTER_EMAIL": "bots@omnibots.local"}
 
 
+# Found live in A14.a.02: the bots committed __pycache__/*.pyc into the project. Build junk stays out of the history
+# through the history repo's own info/exclude: nothing is written into the user's folder, their .gitignore untouched.
+JUNK = "# OmniBots: build junk stays out of the project history\n__pycache__/\n*.py[co]\n.tmp/\n"
+
+
+def _exclude_junk(folder: Path, git_dir: Path | None) -> None:
+    info = (git_dir if git_dir is not None else folder / ".git") / "info"
+    if not info.parent.is_dir():
+        return
+    f = info / "exclude"
+    old = f.read_text(encoding="utf-8", errors="replace") if f.is_file() else ""
+    if JUNK not in old:
+        info.mkdir(exist_ok=True)
+        f.write_text(old + ("\n" if old and not old.endswith("\n") else "") + JUNK, encoding="utf-8")
+
+
 def _git(folder: Path, *args: str, env_extra: dict[str, str] | None = None, git_dir: Path | None = None) -> subprocess.CompletedProcess:
     """Bots write into project folders, so git here runs hardened (hooks off, config checked, A9.a.03).
     A project whose .git/config was tampered with gets a failed git result (logged), never a hook run."""
@@ -128,6 +144,7 @@ class ProjectStore:
             r = _git(folder, "init", "-q")
         if r.returncode != 0:
             raise RuntimeError(f"git init failed: {r.stderr.strip()}")
+        _exclude_junk(folder, git_dir)
         _git(folder, "add", "-A", git_dir=git_dir)
         msg = "project created" if git_dir is None else "project created (the folder as it was)"
         _git(folder, "commit", "-q", "--allow-empty", "-m", msg, git_dir=git_dir)
@@ -156,6 +173,7 @@ class ProjectStore:
         folder, gd = self.folder(project_id), self.git_dir(project_id)
 
         def work() -> str | None:
+            _exclude_junk(folder, gd)                     # projects made before the rule get it too
             _git(folder, "add", "-A", git_dir=gd)
             if _git(folder, "diff", "--cached", "--quiet", git_dir=gd).returncode == 0:
                 return None

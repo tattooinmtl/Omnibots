@@ -140,6 +140,8 @@ class Orchestrator:
                  and p.name not in ("GOAL.md", "REPORT.md")] if folder.is_dir() else []
         if len(files) <= 2:
             return None                                    # trivial: Omi may skip it
+        # found live in A14.a.02: Omi had deleted a risky script but not committed yet; the review saw it and FAILed
+        await self.projects.commit(pid, "work before review", author=BOSS_ID)
         diff = await self.projects.diff(pid)
         if not diff.strip():
             return None

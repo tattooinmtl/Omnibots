@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from omnibots.runtime.sandbox import Sandbox
+from omnibots.runtime.sandbox import PY_FLAGS, Sandbox
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows AppContainer sandbox")
 
@@ -31,7 +31,7 @@ def py(tmp_path: Path, name: str, code: str) -> list[str]:
     ws = tmp_path / "ws"
     ws.mkdir(exist_ok=True)
     (ws / name).write_text(code, encoding="utf-8")
-    return [sys.executable, "-I", str(ws / name)]
+    return [sys.executable, *PY_FLAGS, str(ws / name)]         # the flags run_python uses
 
 
 def test_runs_code_and_reports_the_level(sb, tmp_path):
@@ -125,6 +125,18 @@ def test_shell_commands_with_quotes(sb, tmp_path):
     (tmp_path / "ws").mkdir(exist_ok=True)
     r = run(sb.run('python -c "print(\'quoted ok\')" && echo second', cwd=tmp_path / "ws", timeout=30))
     assert "quoted ok" in r.output and "second" in r.output and r.exit_code == 0
+
+
+def test_temp_folders_work_inside_the_container(sb, tmp_path):
+    """Found live in A14.a.02: tempfile.mkdtemp()/TemporaryDirectory() were "Access is denied" in the container
+    (Python 3.12 makes mode-0o700 folders owner-only), so a bot's tests couldn't use a temp folder."""
+    code = ("import os, tempfile\n"
+            "with tempfile.TemporaryDirectory() as d:\n    open(os.path.join(d, 'x'), 'w').write('1')\n"
+            "d = tempfile.mkdtemp(dir='.')\nopen(os.path.join(d, 'y'), 'w').write('2')\nprint('TEMP OK')\n")
+    direct = run(sb.run(py(tmp_path, "t.py", code), cwd=tmp_path / "ws", timeout=30))
+    shell = run(sb.run("python t.py", cwd=tmp_path / "ws", timeout=30))           # python started by run_shell too
+    assert "TEMP OK" in direct.output and direct.exit_code == 0, direct.output
+    assert "TEMP OK" in shell.output and shell.exit_code == 0, shell.output
 
 
 def test_plain_s0_fallback_still_works(tmp_path):
