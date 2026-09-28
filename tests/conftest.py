@@ -33,7 +33,7 @@ def run_app(*args: str, wait: bool = True, timeout: float = 60) -> subprocess.Co
 
 
 def send(cmd: str, *extra: str) -> tuple[int, dict]:
-    r = run_app("--send", cmd, *extra)
+    r = run_app("--send", cmd, *extra, timeout=90)   # longer than the client's own reply wait (ipc.REPLY_WAIT_MS, A15.a.01)
     out = r.stdout.strip().splitlines()
     return r.returncode, (json.loads(out[-1]) if out else {})
 

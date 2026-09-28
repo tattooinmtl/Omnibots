@@ -159,6 +159,9 @@ class Orchestrator:
                  "## Jobs", "", "| Job | Bot | Status | Attempts |", "|---|---|---|---|"]
         for j in jobs:
             lines.append(f"| {j.title} | {names.get(j.assigned_bot_id, j.assigned_bot_id or '-')} | {j.status} | {j.attempts} |")
+        live = await self.db.read_one("SELECT live_url, live_checked_at FROM projects WHERE id=?", (pid,))
+        if live and live["live_url"]:
+            lines += ["", "## Live", "", f"- {live['live_url']} (checked {live['live_checked_at']})"]
         lines += ["", "## Evidence (accepted claims)", ""]
         acc = [c for c in claims if c["status"] == "accepted"]
         for c in acc:

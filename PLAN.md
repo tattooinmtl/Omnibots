@@ -1000,9 +1000,18 @@ _(empty)_
 - Budget: **A9.c.03** ✅ (the project cap that asks). The team/bot caps (A9.c.02) stay as they are.
 
 #### A15.c — Honest "done" (Grok F6)
-- **A15.c.01** ⏳ **`url_quote` evidence is fetched**: the page is opened and must contain the quote (today only the typed quote is checked, `board/ledger.py`).
-- **A15.c.02** ⏳ **`accept_claim` re-runs a named test** and rejects with the real output when it fails; a named command must appear in what the bot ran (already checked) and a named file must exist.
-- **A15.c.03** ⏳ **A project keeps its live URL.** A deploy claim stores it; the project isn't `done` until that check passed once; `done` doesn't mean "stop watching" (A15.f).
+- **A15.c.01** ✅ **`url_quote` evidence is fetched**: the page is opened and must contain the quote (today only the typed quote is checked, `board/ledger.py`).
+- **A15.c.02** ✅ **`accept_claim` re-runs a named test** and rejects with the real output when it fails; a named command must appear in what the bot ran (already checked) and a named file must exist.
+- **A15.c.03** ✅ **A project keeps its live URL.** A deploy claim stores it; the project isn't `done` until that check passed once; `done` doesn't mean "stop watching" (A15.f).
+
+**A15.c Notes:**
+- 2026-09-27 Claude: PASSED A15.c
+  - A15.c.01 `board/ledger.py`: `Ledger.verify_pages` opens every cited url_quote page at submit (like web_fetch: public addresses, loopback only for a dev server on this PC; 30 s) and the quote must be on it (whitespace and case don't matter, HTML entities decoded); otherwise the claim isn't recorded and the bot is told what the page really starts with. `detail.verified` + `checked_at` are stored. `fetch` is injectable.
+  - A15.c.02 `orchestrator/boss_tools.py`: `accept_claim` re-runs every cited `test` in the project folder (sandbox, 300 s) before accepting. A test that fails now turns the accept into `reject_claim` with its real output and "make that test pass" (the usual attempts/escalation rules apply). Inline `python <inline code>` isn't kept, so it's reported as "not re-run" instead of being trusted silently.
+  - A15.c.03 migration `005_live_url.sql` (`projects.live_url`, `live_checked_at`); `submit_claim` evidence takes `live: true` on the url_quote of a deployed result; on accept a checked one becomes the project's live address (A15.f checks it later) and REPORT.md gets a "## Live" line (`orchestrator/goal.py`).
+  - Tests: `tests/test_honest_done.py` (2: a real local page; a real sandbox re-run that passes, then one that fails with its output); `test_a4_board.py` still passes.
+  - Full suite: 455 passed, 1 failed, 26 skipped under load. The failure (`test_a1_app::test_missing_omni_is_a_clear_error_not_a_crash`) came from A15.a.01: the `--send` client now waits up to 65 s for an answer, but the test helper `conftest.send` killed it at 60 s during a slow startup instead of retrying. The helper now allows 90 s; `test_a0_app` + `test_a1_app` → 9 passed.
+  - Not done here: "the project isn't `done` until the live check passed once" is covered only at claim time (the page must answer with the quote); the scheduled re-check is A15.f.01.
 
 #### A15.d — Work keeps going (Grok F1 + F8)
 - **A15.d.01** ⏳ **The end of a goal isn't a Stop.** `run_goal` no longer cancels unfinished jobs just because Omi submitted (A7.a.11 stays for the CLI harness); they stay `assigned` and the listen loop (A7.a.15) carries them. User Stop and Panic get their own status, which nothing restarts.
