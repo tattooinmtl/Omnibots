@@ -1134,7 +1134,7 @@ _(empty)_
 - **A16.c.99** ✅ **Acceptance:** delete the database file, Restore brings back the last backup and the bots with their memory; a 100k-message test board shrinks after retention and the app starts as fast as before.
 
 #### A16.d — Update from inside the app
-- **A16.d.01** ⏳ **About → "Update now"** when GitHub has a newer version: runs the same `install.ps1` (fixed in A11.o.04) against the install folder, with a backup first (A16.c.02). If a goal is running, asks first (stop now / after the goal / cancel). Then restarts the app. For a git clone that isn't an installer folder, it says to `git pull` instead.
+- **A16.d.01** 🟡 **About → "Update now"** when GitHub has a newer version: runs the same `install.ps1` (fixed in A11.o.04) against the install folder, with a backup first (A16.c.02). If a goal is running, asks first (stop now / after the goal / cancel). Then restarts the app. For a git clone that isn't an installer folder, it says to `git pull` instead.
 - **A16.d.99** ⏳ **Acceptance:** an install at version N updates to N+1 from the About window and comes back with its bots, memory and settings.
 
 #### A16.e — Omi reviews the token asks

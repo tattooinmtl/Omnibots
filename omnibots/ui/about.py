@@ -16,9 +16,12 @@ from omnibots.ui.omi_face import render_face
 class AboutWindow(QDialog):
     _checked = Signal(object)                        # the version on GitHub (or None), from a worker thread
 
-    def __init__(self, parent=None, latest=v.latest):
+    def __init__(self, parent=None, latest=v.latest, update=None, layout=None):
         super().__init__(parent)
         self.latest_fn = latest
+        self.update_fn = update                         # A16.d: () -> None, the app's "update now" (None: not offered)
+        from omnibots.updater import install_layout
+        self.layout = layout or install_layout()
         self.setWindowTitle("About OmniBots")
         self.setStyleSheet(theme.stylesheet() + f"QDialog {{ background: {theme.BG0}; }}")
         self.setMinimumWidth(520)
@@ -55,6 +58,11 @@ class AboutWindow(QDialog):
         self.status = QLabel("")
         self.status.setWordWrap(True)
         row.addWidget(self.check)
+        self.update_btn = QPushButton("Update now")
+        self.update_btn.setToolTip("Backs up, closes OmniBots, runs the installer, and starts it again")
+        self.update_btn.clicked.connect(self.update_now)
+        self.update_btn.hide()
+        row.addWidget(self.update_btn)
         row.addWidget(self.status, 1)
         root.addLayout(row)
         credits = QLabel(f"Made by <b>{v.AUTHOR}</b> · <a style='color:{theme.ACCENT_CYAN}' href='mailto:{v.EMAIL}'>{v.EMAIL}</a><br>"
@@ -82,15 +90,24 @@ class AboutWindow(QDialog):
         if remote is None:
             self.status.setText(f"<span style='color:{theme.AMBER}'>Couldn't reach GitHub. Try again later.</span>")
         elif v.newer(remote, v.VERSION):
-            self.status.setText(f"<span style='color:{theme.GREEN}'>Version {remote} is out.</span> "
-                                "Update: <code>git pull</code> then <code>pip install -r requirements.lock</code>")
+            if self.layout.get("kind") == "installer" and self.update_fn is not None:
+                self.status.setText(f"<span style='color:{theme.GREEN}'>Version {remote} is out.</span>")
+                self.update_btn.show()
+            else:
+                self.status.setText(f"<span style='color:{theme.GREEN}'>Version {remote} is out.</span> "
+                                    "Update: <code>git pull</code> then <code>pip install -r requirements.lock</code>")
         elif v.newer(v.VERSION, remote):
             self.status.setText(f"You're ahead of GitHub ({remote}): this copy has changes not pushed yet.")
         else:
             self.status.setText(f"<span style='color:{theme.GREEN}'>✔ You're up to date ({v.VERSION}).</span>")
 
 
-def open_about(parent=None) -> AboutWindow:
-    w = AboutWindow(parent)
+    def update_now(self) -> None:
+        self.update_btn.setEnabled(False)
+        self.status.setText("Getting ready to update…")
+        self.update_fn()
+
+def open_about(parent=None, update=None) -> AboutWindow:
+    w = AboutWindow(parent, update=update)
     w.show()
     return w

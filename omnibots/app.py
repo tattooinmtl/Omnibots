@@ -318,7 +318,24 @@ def main(argv: list[str] | None = None) -> int:
                                  creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
                 app.quit()
 
-            tray = Tray(engine, live, restart_app=restart_app, home=paths.home)
+            def update_app() -> None:
+                """A16.d: back up, stop what runs (asked first), then the updater takes over and the app quits."""
+                from PySide6.QtWidgets import QMessageBox
+                from omnibots.updater import install_layout, start_update
+                layout = install_layout()
+                busy = bool(engine.runner.active) or any(not t.done() for t in engine.orchestrator.boss_tasks.values())
+                if busy and QMessageBox.question(None, "Update now?", "Bots are working. Update now? Their work is cut off and "
+                                                 "carries on by itself after the update.") != QMessageBox.StandardButton.Yes:
+                    return
+                try:
+                    engine.submit(engine.backup_now("before-update")).result(timeout=120)
+                except Exception as exc:
+                    if QMessageBox.question(None, "Backup failed", f"The backup failed ({exc}). Update anyway?") != QMessageBox.StandardButton.Yes:
+                        return
+                start_update(os.getpid(), layout)
+                app.quit()
+
+            tray = Tray(engine, live, restart_app=restart_app, home=paths.home, update_app=update_app)
             if restored:
                 QTimer.singleShot(1500, lambda: tray.icon.showMessage("OmniBots", f"Backup: {restored}"))
             tray.show()
