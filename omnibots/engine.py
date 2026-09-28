@@ -244,6 +244,7 @@ class Engine:
                                          goal_seconds=float(o.get("goal_minutes", 30)) * 60,
                                          playbooks=self.playbooks)
         self.factory.risk_of = self._tool_risk
+        self.runner.review_chain = list(CHEAP_FIRST)                         # A16.e
         from omnibots.orchestrator.relay import RelayDesk
         self.runner.relay = RelayDesk(db=self.db, bus=self.bus, registry=self.registry, runner=self.runner, projects=self.projects,
                                       leash=self.leash, home=self.home, wait_seconds=float(o.get("tool_relay_minutes", 10)) * 60)

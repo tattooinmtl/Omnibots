@@ -133,6 +133,7 @@ class JobRunner:
         self.db, self.registry, self.router, self.approvals = db, registry, router, approvals
         self.home, self.sandbox, self.bus, self.ledger, self.keep_awake = home, sandbox, bus, ledger, keep_awake
         self.relay = None                                   # orchestrator.relay.RelayDesk (A8.d.02), set by the engine
+        self.review_chain: list[str] | None = None          # A16.e: Omi's quick review of token asks (the engine sets the cheap lane)
         self.listener, self.learn = listener, learn
         self.lesson_chain = lesson_chain or list(CHEAP_FIRST)
         self.memory_limit = memory_limit
@@ -370,7 +371,8 @@ class JobRunner:
                          events=events, sandbox=self.sandbox,
                          system_prompt=self.system_prompt(prof), max_iterations=max_iterations or int(prof.limits.get("max_iterations", 40)),
                          priority="boss" if prof.is_boss else "work", token_budget=budget.get("tokens"), budget=self.budget,
-                         risk_ceiling=prof.risk_ceiling or None, summary_prefix=summary_prefix)
+                         risk_ceiling=prof.risk_ceiling or None, summary_prefix=summary_prefix,
+                         review_chain=self.review_chain if not prof.is_boss else None)
         self.active[bot_id] = agent
         self.tasks[bot_id] = asyncio.current_task()
         self.last_activity[bot_id] = time.monotonic()

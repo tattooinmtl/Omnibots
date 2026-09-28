@@ -156,3 +156,42 @@ def test_the_allocations_window_lists_the_project_bots_and_answers_a_waiting_ask
     assert 250_000 <= rows[bot.id]["used"] < 251_000 and rows[bot.id]["allocated"] == 200_000 and rows[bot.id]["asking"]
     assert rows[idle.id]["state"] == "idle" and rows[idle.id]["used"] == 0 and not rows[idle.id]["asking"]
     assert total == 300_000 and out.status == "completed" and after == 300_000      # the bot didn't add its 30k again
+
+
+def test_omi_turns_down_a_looping_bots_ask_and_it_stops(tmp_path):
+    """A16.e: Omi looks first. A bot stuck on the same failure is turned down by Omi itself; no card reaches you."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            bot = await setup(e, 250_000)
+            e["runner"].review_chain = ["plan/m"]
+            mock.script("work", sse('{"tokens": 90000, "why": "the test still fails."}'), sse("should not run"))
+            mock.script("plan", sse('{"verdict": "no", "note": "it ran the same failing test 4 times without changing the code."}'))
+            seen: list = []
+            ok = asyncio.create_task(approver(e["approvals"], seen, decide=True))
+            out = await e["runner"].run(bot.id, "repair", project_id="p1", origin="fix")
+            ok.cancel()
+            board = [m.text() for m in await query(e["db"], project="p1", limit=50)]
+            await e["db"].close()
+            return out, seen, board
+    out, seen, board = run(go())
+    assert out.status == "blocked" and seen == []                                   # Omi said no: nothing for you to click
+    assert any("Omi turned down Builder's request" in t and "same failing test" in t for t in board)
+
+
+def test_omis_view_is_on_the_card_when_the_ask_is_fair(tmp_path):
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            bot = await setup(e, 250_000)
+            e["runner"].review_chain = ["plan/m"]
+            mock.script("work", sse('{"tokens": 30000, "why": "one page left."}'), sse("all done"))
+            mock.script("plan", sse('{"verdict": "fair", "note": "it finished 4 of 5 pages; one left."}'))
+            seen: list = []
+            ok = asyncio.create_task(approver(e["approvals"], seen, decide=True))
+            out = await e["runner"].run(bot.id, "repair", project_id="p1", origin="fix")
+            ok.cancel()
+            await e["db"].close()
+            return out, seen
+    out, seen = run(go())
+    assert out.status == "completed" and len(seen) == 1 and "Omi's view: it finished 4 of 5 pages; one left." in seen[0]["summary"]

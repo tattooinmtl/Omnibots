@@ -1138,7 +1138,7 @@ _(empty)_
 - **A16.d.99** ⏳ **Acceptance:** an install at version N updates to N+1 from the About window and comes back with its bots, memory and settings.
 
 #### A16.e — Omi reviews the token asks
-- **A16.e.01** ⏳ **Omi sees the ask before you do** (A9.c.03 today raises Omi's card with the bot's own estimate, and Omi's model doesn't look). One short Omi turn (cheap lane, capped) reads the bot's recent steps and the board, then either forwards it with a one-line opinion ("fair: one page left" / "it has repeated the same failing test 4 times; I'd say no") shown on the card, or declines itself and tells the bot to stop and report. Omi can't approve on its own: only you allocate.
+- **A16.e.01** 🟡 **Omi sees the ask before you do** (A9.c.03 today raises Omi's card with the bot's own estimate, and Omi's model doesn't look). One short Omi turn (cheap lane, capped) reads the bot's recent steps and the board, then either forwards it with a one-line opinion ("fair: one page left" / "it has repeated the same failing test 4 times; I'd say no") shown on the card, or declines itself and tells the bot to stop and report. Omi can't approve on its own: only you allocate.
 - **A16.e.99** ⏳ **Acceptance:** a looping bot's ask arrives with Omi's "I'd say no" and the reason; a healthy one with "fair".
 
 **Notes:**
