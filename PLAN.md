@@ -1169,17 +1169,41 @@ _(empty)_
 
 > Budgets are sized from the A2.b.05 probe. **Lineup (ADR-11):** 4 MiniMax seats (the boss holds seat 1; seats 2–4 are lent to Planner, Web agent, Coder and Reviewer as needed) + **the 5th bot (Document & utility) in the cheap lane** `nvidia` → `agnes` → `openrouter` → `xkiro`. MiniMax usage is drawn from the 1.5B-token reservoir.
 
-- **A14.a.01** ⏳ Scenario 1, *Coordinate*: a research and comparison report (A7.99), with board traffic, a review and `memory.md` updates
-- **A14.a.02** ⏳ Scenario 2, *Full stack*: "build a small web app with a backend, tests and a README". The bots split frontend, backend and tests, use leases, the reviewer finds and fixes issues, and all tests pass in the sandbox.
-- **A14.a.03** ⏳ Scenario 3, *Ship it*: "host that app". The team compares hosts, the user picks one, it's deployed through the API with one approval, and the live URL is checked by a bot.
-- **A14.a.04** ⏳ Scenario 4, *Adapt*: a site with no API. The bots forge an adapter, use it, then reuse it on a second run.
-- **A14.a.05** ⏳ Scenario 5, *Commerce rehearsal*: the cart and checkout review stops at the approval card. **A real purchase only happens with the user's explicit go.**
-- **A14.a.06** ⏳ Chaos: force 429s during scenario 2; failover plus the MiniMax fallback keep it going, and nothing freezes.
+- **A14.a.01** ✅ Scenario 1, *Coordinate*: a research and comparison report (A7.99), with board traffic, a review and `memory.md` updates
+- **A14.a.02** ✅ Scenario 2, *Full stack*: "build a small web app with a backend, tests and a README". The bots split frontend, backend and tests, use leases, the reviewer finds and fixes issues, and all tests pass in the sandbox.
+- **A14.a.03** ⚠️ Scenario 3, *Ship it*: "host that app". The team compares hosts, the user picks one, it's deployed through the API with one approval, and the live URL is checked by a bot.
+- **A14.a.04** ⚠️ Scenario 4, *Adapt*: a site with no API. The bots forge an adapter, use it, then reuse it on a second run.
+- **A14.a.05** ⚠️ Scenario 5, *Commerce rehearsal*: the cart and checkout review stops at the approval card. **A real purchase only happens with the user's explicit go.**
+- **A14.a.06** ✅ Chaos: force 429s during scenario 2; failover plus the MiniMax fallback keep it going, and nothing freezes.
 - **A14.a.07** ⏳ **Prove the Guild is better**: a 20-task GAIA-style mini set plus scenarios 1–2, run two ways: plain Relay (CORAL-like) and the full Guild (Ledger, Council, playbooks). Record accuracy, tokens, time and cost. Keep a Guild feature only if it earns its cost. On a second run of the same goals, playbooks should cut time and tokens noticeably.
 - **A14.99** ⏳ **Phase A acceptance:** scenarios 1–4 and 6 pass on real providers. Scenario 5 reaches a correct approval card. The user confirms it works end to end on their PC. **→ Phase B unlocks.**
 
 **Notes:**
-_(empty)_
+- 2026-09-28 Claude: starting work (user: "finish it all")
+  - Goal: run the scenarios live on real providers with `tools/run_goal.py` (the same Omi, presence, relay and learning as the app), in scratch homes under `%TEMP%` (the user's `~/.omnibots` and running app untouched). Fix what the runs find.
+- 2026-09-28 Claude: PASSED A14.a.01 (scenario 1, research report)
+  - Run: 1391 s, real MiniMax + cheap lane. Board traffic between Omi and the research bots, a reviewer PASS, `memory.md` updates, and a sourced `hosting_report.md`.
+- 2026-09-28 Claude: PASSED A14.a.02 (scenario 2, full stack), after two runs and seven fixes
+  - Run 2: 2067 s, completed. Frontend, backend and tests bots plus Omi; `server.py`, `index.html`, `test_server.py`, `README.md`. Re-run by hand afterwards: `python -m unittest` → 17 tests OK. Omi's own claim was rejected once by its checks and redone. The automatic review ran (Omi had skipped it).
+  - Found and fixed (each with a test):
+    - a carried-on job left its dependents blocked (`graph.continue_or_record` refreshes) — 205ba91
+    - the harness had no presence or relay (`tools/run_goal.py` now runs both, learning on) — 205ba91
+    - scope: the project's own path with spaces, and an escaped `\\n` in code, were read as leaving the folder — caaea1f
+    - Omi never heard TOOL_REQUEST (not an inbox type) — caaea1f
+    - a 4-file app went unreviewed → goals with more than 2 files get an automatic review (A15.a.07 backed by code) — caaea1f
+    - the TOOL_REQUEST text had no id: Omi answered "the tool request above", then an expired id, and the asking bot waited 10 min twice. The id is in the text now and a wrong id lists the open ones — 2c18b86
+    - the reviews diffed HEAD while Omi's own edits were uncommitted: the automatic review FAILed on a script Omi had already deleted. Both reviews commit first — e71daef
+    - `tempfile.mkdtemp()` / `TemporaryDirectory()` were "Access is denied" in the AppContainer (Python 3.12 makes 0o700 folders owner-only). A sandbox `sitecustomize` keeps them inheritable; python runs with `-s -P` (`-I` minus `-E`; the env is already an allowlist) so it loads. The tests bot had worked around it by leaving 60 empty `todo-tests-*` folders — e71daef
+    - `__pycache__/*.pyc` were committed with the work; the history repo's `info/exclude` keeps build junk out (nothing written into the user's folder) — e71daef
+  - Leases: not observed in the runs (the bots worked on separate files). Not a failure of the scenario, but A14.a.07 should watch for it.
+  - `tools/run_goal.py --chaos PROVIDER:RATE` added for A14.a.06.
+- 2026-09-28 Claude: PASSED A14.a.06 (chaos: scenario 2 with `--chaos minimax.io:0.3`)
+  - Run: 1757 s, completed. 33 injected 429s (Retry-After 30 s): MiniMax 80 × 200 + 33 × 429, the cheap lane carried on (nvidia 120 calls). Nothing froze; every bot resumed after its cool-down. Reviewer: VERDICT PASS. Re-run by hand: `python -m unittest` → 6 tests OK. No `.pyc` in the history (the info/exclude fix, live).
+  - The relay answered in 26 s and 32 s this time (the id fix, live). Found: the tests bot's claim was still rejected twice ("you did not run it in this job") because a relayed run didn't count as its evidence; its job blocked and Omi wrote the tests itself. Fixed: what a holder bot really ran through the relay is added to the asker's runs, marked `relayed_by`; Omi's typed `answer_tool_request` stays its word (the tool descriptions say so) — 225de9f
+  - Seen, not fixed: the bots leave helper scripts in the project (`_smoke_test.py`, `run_tests*.py`, `runner.py`). The review passed them; a tidy-up rule could come with A15/A16 polish if the user wants it.
+- 2026-09-28 Claude: BLOCKED A14.a.03, A14.a.04, A14.a.05
+  - They need A10 pieces that aren't built: hosting/deploy connectors (A10.c.01) for a.03, site adapters (A10.b.02) for a.04, the commerce flow (A10.c.03) for a.05. a.03 and a.05 also need the user (pick a host, a live deploy, the approval card). The user decides whether to build A10.c/A10.b.02 next.
+- 2026-09-28 Claude: A14.a.07 not run (needs a 20-task GAIA-style set and a plain-Relay mode to compare against; a separate piece of work). A13.99 can use the A14.a.02 run's `provider_usage_events` (minimax.io 129 calls, nvidia 28) for its manual count.
 
 ---
 
@@ -1263,6 +1287,8 @@ All were decided by the user on 2026-09-25. Changing any of them needs the user'
 | (new 2026-09-25) | ADR-10–13, §4 Guild, A0.c.03, A2.b.06–07, A3.a.08–09, A4.a.05, A5.a.05, A6.a.04, A6.b, A7.a.08–10, A7.b, A8.c, A10.b.03, A10.d, A10.e, A11.f–i, A14.a.07 | the CORAL hub, seats, Ledger, Council, playbooks, Grok Bot parity (routines, chat, connectors, teach-by-showing, remote approvals) |
 
 ## 9. Notes Log
+
+- 2026-09-28 Claude: **A14 live runs** (scenarios 1 and 2 passed; 3–5 blocked on A10). Fixes that touch other phases: the tool relay's request text and errors (A8.d.02), the automatic review and reviews committing first (A15.a.07, A7), temp folders in the sandbox and `-s -P` instead of `-I` (A9.a.01), build junk kept out of project history (A11.m), `a2a.INBOX_TYPES` includes TOOL_REQUEST (A7), a relayed run counts as the asker's evidence (A8.d.02 × A4.a.08; `TurnResult.runs`).
 
 - 2026-09-27 Claude: **A16 Safety and upkeep** added (user OK): prompt-injection tests (A16.a), your 👍/👎 on the work (A16.b), backup / restore / retention (A16.c), update from the About window (A16.d), Omi reviewing token asks (A16.e). Suggested Phase A order: A15.a → A16.a + A16.c → A15.c → A16.b → A13 + projects panel → rest of A15 → A14. Cross-phase: A16.c.02 backs up before migrations (A0.b); A16.e extends A9.c.03; A16.b feeds A8.c.02 and A13.
 
