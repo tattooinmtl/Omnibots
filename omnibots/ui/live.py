@@ -197,8 +197,30 @@ class LiveUI(QObject):
         for a in (approvals.list_pending() if approvals is not None else []):
             if a.get("bot_id") == bot_id or bot_id == "omi":
                 self.cards.setdefault(str(a["id"]), []).append(w.chat.add_approval(a, self.decide))
+        if bot_id == "omi" and getattr(w, "own_strip", None) is not None and hasattr(self.engine, "ui_background_today"):
+            self._own_strip(w)
         w.show()
         return w
+
+    # ── on their own (A15.g) ──────────────────────────────────────────────
+    def _own_strip(self, w) -> None:
+        w.own_strip.pause_toggled.connect(
+            lambda on: self._later(self.engine.set_background_paused(on), lambda r, e: self.refresh_strip()))
+        self._strip_timer = QTimer(self)
+        self._strip_timer.timeout.connect(self.refresh_strip)
+        self._strip_timer.start(30_000)
+        self.refresh_strip()
+
+        def away(text, err):
+            if err is None and text and "omi" in self.windows:
+                self.windows["omi"].chat.add(ChatMessage("bot", text))
+        self._later(self.engine.ui_away_summary(), away)
+
+    def refresh_strip(self) -> None:
+        w = self.windows.get("omi")
+        if w is None or getattr(w, "own_strip", None) is None:
+            return
+        self._later(self.engine.ui_background_today(), lambda d, e: w.own_strip.set_data(d) if e is None and d else None)
 
     # ── chat sessions (File → New/Close session, Recent sessions; Edit → Clear chat) ──
     def _save_chat(self, bot: str, who: str, text: str) -> None:
@@ -434,6 +456,8 @@ class LiveUI(QObject):
         p = m.get("payload") or {}
         text = str(p.get("text") or p.get("result") or p.get("summary") or p.get("title") or p.get("reason")
                    or p.get("error") or json.dumps(p, ensure_ascii=False)[:200])
+        if m.get("type") == "WORK_STARTED" and p.get("origin") not in (None, "user"):    # A15.g.02: say what started it
+            text += f" — on its own: {p.get('why') or p['origin']}"
         when = str(m.get("created_at") or "")[11:16]
         w.board.add(BoardEntry(when, m.get("sender_id") or "", sender, s_role, m.get("recipient_id"), rec or None,
                                m.get("type", ""), text))

@@ -167,6 +167,11 @@ class BotWindow(QMainWindow):
         center.setSpacing(10)
         self.team_strip = TeamStrip(team or [], bot_id)
         center.addWidget(self.team_strip)
+        self.own_strip = None
+        if bot_id == "omi":                              # A15.g.03: what the bots did on their own today
+            from omnibots.ui.widgets import OwnStrip
+            self.own_strip = OwnStrip()
+            center.addWidget(self.own_strip)
         self.chat = ChatPanel(card.accent, badge=job_for_role(card.role))
         self.chat.action.connect(lambda a: self._clear_chat() if a == "clear" else self.session_action.emit("new", ""))
         self.tabs = EditorTabs(self.chat)                # Chat first; opened files beside it (A11.m.04)

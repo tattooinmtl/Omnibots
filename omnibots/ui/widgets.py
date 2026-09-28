@@ -643,6 +643,38 @@ class ChatPanel(GlassPanel):
         return card
 
 
+class OwnStrip(QFrame):
+    """A15.g.03: one line in Omi's window: what the bots did on their own today, and a pause toggle
+    (the tray's "Pause background work")."""
+    pause_toggled = Signal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ownStrip")
+        self.setStyleSheet(f"QFrame#ownStrip {{ background: {theme.BG1}; border: 1px solid {theme.BORDER}; border-radius: 10px; }}"
+                           "QLabel { background: transparent; border: none; }")
+        h = QHBoxLayout(self)
+        h.setContentsMargins(12, 4, 6, 4)
+        self.label = QLabel("On their own today: …")
+        self.label.setObjectName("dim")
+        self.label.setToolTip("Work the bots started by themselves today: Omi's checks, repairs, next rounds, routines, the night shift")
+        h.addWidget(self.label, 1)
+        self.pause = QToolButton()
+        self.pause.setCheckable(True)
+        self.pause.setText("🔕 Pause")
+        self.pause.setToolTip("Pause background work in every project (your own goals still run)")
+        self.pause.toggled.connect(self.pause_toggled.emit)
+        h.addWidget(self.pause)
+
+    def set_data(self, d: dict) -> None:
+        self.label.setText(str(d.get("text") or ""))
+        if self.pause.isChecked() != bool(d.get("paused")):
+            self.pause.blockSignals(True)
+            self.pause.setChecked(bool(d.get("paused")))
+            self.pause.blockSignals(False)
+        self.pause.setText("▶ Resume" if d.get("paused") else "🔕 Pause")
+
+
 class VerdictCard(QFrame):
     """How did it go? 👍 / 👎 on the goal and on each bot's accepted claim, with one optional note box:
     a thumb sends its row with the note (then the box clears). `on_rate(project_id, claim_id, verdict,

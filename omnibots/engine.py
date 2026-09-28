@@ -561,6 +561,19 @@ class Engine:
                 "SELECT id, name, schedule, enabled FROM routines WHERE project_id=? ORDER BY name", (r["id"],))]
         return rows
 
+    # ── what the bots did on their own (A15.g) ─────────────────────────────
+    async def ui_away_summary(self) -> str | None:
+        """Once, when Omi's window opens: the note for the chat, then 'last seen' moves to now."""
+        from omnibots import away
+        text = await away.away_summary(self.db, await away.get_last_seen(self.db))
+        await away.set_last_seen(self.db)
+        return text
+
+    async def ui_background_today(self) -> dict[str, Any]:
+        from omnibots import away
+        d = await away.today(self.db, self.leash.paused)
+        return {**d, "text": away.strip_text(d)}
+
     async def remove_routine(self, routine_id: str) -> str:
         await self.db.write("DELETE FROM routines WHERE id=?", (routine_id,))
         await self.db.audit("user", None, "routine_removed", json.dumps({"routine": routine_id}))
@@ -769,6 +782,11 @@ class Engine:
             await self.mcp.close()                              # MCP server processes
         if self.runner:
             await self.runner.close_browsers()                  # Chromium contexts (A10.a.01)
+        try:
+            from omnibots.away import set_last_seen
+            await set_last_seen(self.db)                    # A15.g.01: "while you were away" counts from here
+        except Exception:
+            log.exception("could not note when the app closed")
         try:
             await self.db.audit("system", None, "session_end", json.dumps({"cancelled_tasks": len(tasks)}))
         finally:

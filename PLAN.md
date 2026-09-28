@@ -1065,9 +1065,17 @@ _(empty)_
   - Tests: `tests/test_watching.py` (3). Also hardened `test_a6_projects::test_five_task_dag_runs_in_order_across_two_bots_and_escalates_a_failure`: it checks that A and B overlap, but with instant mock replies A could finish before B started on a busy PC; each reply now takes 0.3 s (3/3 passes). Full suite: 477 passed + that one, 26 skipped.
 
 #### A15.g — How it feels (Claude's additions)
-- **A15.g.01** ⏳ **"While you were away" card** when the app opens: what the bots did on their own since you last looked (checks, fixes, tokens per project, anything waiting for you).
-- **A15.g.02** ⏳ **A "why" on every background action** on the board: what started it (the origin from A15.b.01 plus the file, routine or request).
-- **A15.g.03** ⏳ **"On their own today" strip** in Omi's window: what's running in the background, its tokens, a pause button per project.
+- **A15.g.01** ✅ **"While you were away" card** when the app opens: what the bots did on their own since you last looked (checks, fixes, tokens per project, anything waiting for you).
+- **A15.g.02** ✅ **A "why" on every background action** on the board: what started it (the origin from A15.b.01 plus the file, routine or request).
+- **A15.g.03** ✅ **"On their own today" strip** in Omi's window: what's running in the background, its tokens, a pause button per project.
+
+**A15.g Notes:**
+- 2026-09-28 Claude: PASSED A15.g.01–03
+  - `omnibots/away.py` (new): background work = jobs whose origin isn't `user`, grouped per project and kind (checks, repairs, rounds carried on, routine / trigger / night-shift runs, relays), live-site changes from the board, background tokens, and what waits for you (pending approvals, questions since). `last_seen` (a parameter, to the millisecond) is set when Omi's window has shown the note and when the app closes.
+  - A15.g.01 `engine.ui_away_summary`: when Omi's window opens, "While you were away (since …)" goes into its chat, only if something happened on its own or something waits for you (plain text: the chat doesn't render Markdown, found when rendering it).
+  - A15.g.02 `ui/live.py`: a WORK_STARTED line on the board ends with "— on its own: <why>" for background work (the bot's console already said it, A15.b.01).
+  - A15.g.03 `ui/widgets.OwnStrip` in Omi's window under the team strip: "On their own today: …" (refreshed every 30 s) with 🔕 Pause / ▶ Resume (the same switch as the tray's Pause background work).
+  - Tests: `tests/test_away.py` (3). Full suite: 481 passed, 26 skipped.
 
 #### On hold and dropped
 - **Grok F4, workers talk to each other**: on hold. The tool relay (A8.d.02) covers the main need; revisit when relay use shows more is needed. Needs an ADR-10 decision.
