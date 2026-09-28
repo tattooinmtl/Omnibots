@@ -337,8 +337,8 @@ def test_stop_interrupts_and_start_resumes_the_goal(tmp_path):
             await e["db"].close()
             return stopped, st, started, after, boss_prompt, task
     stopped, st, started, after, boss_prompt, task = run(go())
-    assert stopped["stopped"] and st == "interrupted" and task.done()
-    assert started["resumed_projects"] and after == "ready" and "RESUMING after a stop" in boss_prompt
+    assert stopped["stopped"] and st == "stopped" and task.done()          # A15.d.01: your Stop is `stopped`, not "cut off"
+    assert started["resumed_projects"] and after == "ready" and "RESUMING:" in boss_prompt
 
 
 def test_panic_denies_approvals_and_clears_the_seat_line(tmp_path):

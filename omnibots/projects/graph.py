@@ -26,7 +26,8 @@ from omnibots.bots.leash import CURRENT_ORIGIN, child_origin
 DONE = {"completed"}
 DEAD = {"failed", "cancelled"}
 ACTIVE = {"assigned", "running", "waiting_approval", "review"}
-RESUMABLE = {"paused", "interrupted", "blocked"}
+RESUMABLE = {"paused", "interrupted", "stopped", "blocked"}   # stopped = you stopped it (A15.d.01); only ▶ Start resumes it
+MAX_ROUNDS = 5                  # A15.d.03: a job that hits its step limit carries on this many more times
 DEP_BLOCKED = "a dependency failed or was cancelled"
 
 
@@ -239,6 +240,29 @@ class TaskGraph:
         if j and j.status in RESUMABLE:
             await self._set(j, "pending", error=None)
             await self.refresh(j.project_id)
+
+    async def continue_or_record(self, job_id: str, out) -> str:
+        """A15.d.03: a run that ended at its step limit isn't a failure: the same job goes back to its
+        bot (assigned) with a note of where it got to, and the listen loop starts the next round.
+        After MAX_ROUNDS it's an ordinary failure (retry / escalate). Anything else: record_outcome."""
+        res = getattr(out, "result", None)
+        j = await self.get(job_id)
+        if j and res is not None and getattr(res, "status", "") == "max_iterations":
+            budget = dict(j.budget or {})
+            rounds = int(budget.get("rounds", 0)) + 1
+            if rounds <= MAX_ROUNDS:
+                budget["rounds"] = rounds
+                progress = (getattr(res, "answer", "") or "").strip()[-1500:] or "(no summary)"
+                desc = (f"{j.description or j.title}\n\n[Round {rounds} ended at the step limit. Where it got to:]\n{progress}\n"
+                        "Carry on from there; don't redo the finished parts.")
+                await self.db.write("UPDATE jobs SET status='assigned', budget_json=?, description=? WHERE id=?",
+                                    (json.dumps(budget), desc, job_id))
+                if self.bus:
+                    await self.bus.publish(topic_job(job_id), "PROGRESS_UPDATE",
+                                           {"text": f"'{j.title}' hit its step limit; carrying on in round {rounds + 1}"},
+                                           sender_type="system", job_id=job_id, project_id=j.project_id)
+                return "assigned"
+        return await self.record_outcome(job_id, out.status, error=getattr(res, "error", None) if res else None)
 
     async def record_outcome(self, job_id: str, status: str, *, error: str | None = None) -> str:
         """After a run: completed → dependents may become ready; failed → retry

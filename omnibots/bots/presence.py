@@ -110,6 +110,9 @@ class TeamPresence:
         self._maint_tasks: dict[str, asyncio.Task] = {}
         self._notes: dict[str, list[str]] = {}
         self._boss_notes: dict[str, list] = {}          # bot_id -> Omi's messages (Message) waiting for an idle worker
+        self._for_omi: dict[str, str] = {}               # project -> why Omi should look (results arrived between rounds)
+        self._last_round: dict[str, float] = {}
+        self.round_cooldown = 60.0
         self.polls = 0
 
     def busy(self, bot_id: str) -> bool:
@@ -158,6 +161,8 @@ class TeamPresence:
                     await self._flush_notes(bot_id)
                     await self._flush_boss_notes(bot_id)
                     if bot_id == BOSS_ID:
+                        await self._rounds_for_omi()
+                    if bot_id == BOSS_ID:
                         await self._watch_files()
         finally:
             sub.close()
@@ -172,6 +177,11 @@ class TeamPresence:
             text = m.text().strip()
             if text:
                 self._notes.setdefault(bot_id, []).append(text)
+        elif (bot_id == BOSS_ID and m.recipient_id == BOSS_ID and m.project_id and m.sender_type == "bot"
+              and m.message_type in ("CLAIM_SUBMITTED", "HELP_REQUEST", "A2A_MESSAGE", "BLOCKED")
+              and getattr(self.orchestrator, "keep_working", False)):
+            # A15.d.01: a worker that outlived Omi's round reports; Omi needs a round to decide on it
+            self._for_omi[m.project_id] = f"{m.sender_id} sent a {m.message_type.lower().replace('_', ' ')} while you were between rounds."
         elif (m.message_type == "A2A_MESSAGE" and m.recipient_id == bot_id and m.sender_id == BOSS_ID
               and bot_id != BOSS_ID and not self.busy(bot_id) and m.text().strip()):
             # A15.a.06: send_message tells Omi an idle worker "will see this"; now it does. (A worker
@@ -225,11 +235,23 @@ class TeamPresence:
                 if fresh is not None:
                     await self.graph._set(fresh, "review")
             elif out.status not in ("cancelled",):
-                await self.graph.record_outcome(job.id, out.status, error=getattr(out.result, "error", None) if out.result else out.status)
+                await self.graph.continue_or_record(job.id, out)                   # step limit → next round (A15.d.03)
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("pickup failed for %s", bot_id)
+
+    async def _rounds_for_omi(self) -> None:
+        for pid, why in list(self._for_omi.items()):
+            task = getattr(self.orchestrator, "boss_tasks", {}).get(pid)
+            if task is not None and not task.done():
+                self._for_omi.pop(pid, None)          # a round is running: Omi reads it there
+                continue
+            if self.busy(BOSS_ID) or self._clock() - self._last_round.get(pid, -1e9) < self.round_cooldown:
+                continue
+            self._for_omi.pop(pid, None)
+            self._last_round[pid] = self._clock()
+            await self.orchestrator.continue_goal(pid, why + " Decide on what the team sent.")
 
     async def _flush_boss_notes(self, bot_id: str) -> None:
         msgs = self._boss_notes.get(bot_id)
