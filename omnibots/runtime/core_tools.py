@@ -176,6 +176,9 @@ def core_registry() -> ToolRegistry:
     from omnibots.runtime.web_tools import web_tools           # R2: read the web (no login)
     for t in web_tools():
         reg.add(t)
+    from omnibots.runtime.hosting import hosting_tools          # deploy_site (R3) + check_domain (A10.c.01)
+    for t in hosting_tools():
+        reg.add(t)
     from omnibots.runtime.more_tools import core_extra_tools    # grep, find_files, run_shell, git_* (A8.b.01)
     for t in core_extra_tools():
         reg.add(t)
