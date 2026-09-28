@@ -70,12 +70,14 @@ class Tray(QObject):
     _snap = Signal(object, object)       # (snapshot, then) from the engine thread
 
     def __init__(self, engine, live, *, confirm: Callable[[str, str], bool] | None = None,
-                 open_settings: Callable[[], None] | None = None, quit_app: Callable[[], None] | None = None):
+                 open_settings: Callable[[], None] | None = None, quit_app: Callable[[], None] | None = None,
+                 restart_app: Callable[[], None] | None = None, home: Path | None = None):
         super().__init__()
         self.engine, self.live = engine, live
         self.confirm = confirm or self._ask
         self.open_settings = open_settings or self._settings
         self.quit_app = quit_app or self._exit
+        self.restart_app, self.home = restart_app, home
         self.snapshot: dict[str, Any] = {}
         self._faces: dict[tuple[str, str], QIcon] = {}
         self._icon_key: tuple | None = None
@@ -252,6 +254,12 @@ class Tray(QObject):
             self._act(m, text, tip=SOON.format("A11.a.01"))
 
         m.addSeparator()
+        sub = m.addMenu("Backups")
+        sub.setToolTipsVisible(True)
+        self._act(sub, "Back up now", self.backup_now, enabled=self.home is not None,
+                  tip="Database, bots' memory, settings, sessions and skills (never secrets). Also automatic every day.")
+        self._act(sub, "Restore…", self.restore, enabled=self.home is not None and self.restart_app is not None,
+                  tip="Pick a backup; OmniBots saves the current state first, then restarts on the backup")
         self._act(m, "Reset…", tip=SOON.format("A12"))
         self._act(m, "Exit", self.quit_app)
 
@@ -366,6 +374,34 @@ class Tray(QObject):
             self._later(self.engine.approvals.decide(a["id"], pick == "approve", "user via tray"),
                         "Approved" if pick == "approve" else "Denied", lambda ok: f"{a.get('tool')} for {a.get('bot_id')}")
         return pick
+
+    def backup_now(self) -> None:
+        self._later(self.engine.backup_now("manual"), "Backup", lambda p: f"saved: {Path(p).name}")
+
+    def restore(self, choose: Callable[[list[str]], str | None] | None = None) -> str | None:
+        """A16.c.03: pick a backup, confirm, then restart on it (applied before the database opens)."""
+        from omnibots import backup
+        items = backup.list_backups(self.home) if self.home else []
+        if not items:
+            QMessageBox.information(None, "Restore", "No backups yet. Tray → Backups → Back up now makes one.")
+            return None
+        labels = [f"{b['name']}  ({b['size_mb']} MB)" for b in items]
+        if choose is None:
+            from PySide6.QtWidgets import QInputDialog
+            label, ok = QInputDialog.getItem(None, "Restore a backup", "Newest first:", labels, 0, False)
+            label = label if ok else None
+        else:
+            label = choose(labels)
+        if not label:
+            return None
+        pick = items[labels.index(label)]
+        if not self.confirm("Restore this backup?", f"Restore {pick['name']}?\n\nOmniBots saves the current state as a "
+                            "backup first, then restarts on the one you picked."):
+            return None
+        backup.request_restore(self.home, Path(pick["path"]))
+        if self.restart_app:
+            self.restart_app()
+        return pick["name"]
 
     def _exit(self) -> None:
         """Exit: unsaved files in any bot window ask first (Save / Discard / Cancel)."""

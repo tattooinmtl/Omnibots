@@ -184,3 +184,54 @@ def test_waiting_on_the_board_is_not_capped_and_does_not_spend_the_work_budget(t
 
 def test_snapshot_diff_names_adds_and_edits():
     assert diff_snapshots({"a.txt": (1, 1)}, {"a.txt": (2, 1), "b.txt": (1, 1)}) == ["changed a.txt", "added b.txt"]
+
+
+def test_omis_message_to_an_idle_worker_wakes_it_and_the_leash_still_applies(tmp_path):
+    """A15.a.06 (found in the A4 live run): send_message tells Omi an idle worker "will see this";
+    the listen loop now wakes the worker with Omi's message, as the kind of work Omi's own job was."""
+    from omnibots.board.query import query
+    from omnibots.board.types import topic_bot
+    from omnibots.bots.leash import CURRENT_ORIGIN, Leash
+
+    async def go():
+        from mock_provider import MockProviders
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            leash = await Leash(e["db"]).load()
+            worker = await e["reg"].create("Calc", "coder", chain=["work/m"])
+            pid = await e["projects"].create("math")
+            mine = await e["graph"].add_job(pid, "[goal] math", assigned_bot_id=BOSS_ID)          # your goal: origin user
+            token = CURRENT_ORIGIN.set("watch")
+            check = await e["graph"].add_job(pid, "[check] math", assigned_bot_id=BOSS_ID)        # Omi's check: watch
+            CURRENT_ORIGIN.reset(token)
+            await e["db"].write("UPDATE jobs SET origin='watch' WHERE id=?", (check.id,))
+            started = []
+
+            async def fake_run(bot_id, task, **kw):
+                started.append((bot_id, task, kw.get("origin"), kw.get("project_id")))
+                return JobOutcome("", bot_id, "completed", None, 0.0, [])
+
+            e["runner"].run = fake_run
+            p = _presence(e, leash=leash)
+
+            async def omi_says(text, job):
+                await e["bus"].publish(topic_bot(worker.id), "A2A_MESSAGE", {"text": text}, sender_type="bot",
+                                       sender_id=BOSS_ID, recipient_id=worker.id, job_id=job.id, project_id=pid)
+                (m,) = [x for x in await query(e["db"], limit=100) if x.message_type == "A2A_MESSAGE" and x.payload["text"] == text]
+                await p._on_message(worker.id, m)
+                await p._flush_boss_notes(worker.id)
+                if worker.id in p._jobs:
+                    await p._jobs.pop(worker.id)
+
+            await omi_says("verify 1234*5678+91 another way", mine)
+            await omi_says("the header is broken, fix it", check)          # on Watch (the default): held
+            held = list(started)
+            await leash.set_level(pid, "fix")
+            await p._flush_boss_notes(worker.id)
+            await p._jobs.pop(worker.id)
+            await e["db"].close()
+            return worker, pid, held, started
+    worker, pid, held, started = asyncio.run(go())
+    assert len(held) == 1 and held[0][0] == worker.id and "verify 1234*5678+91" in held[0][1]
+    assert held[0][2] == "user" and held[0][3] == pid
+    assert len(started) == 2 and "header is broken" in started[1][1] and started[1][2] == "fix"

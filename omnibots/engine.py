@@ -76,8 +76,9 @@ class Engine:
                  omni_install_root: str = "", watch_interval: float = 2.0, home: Path | None = None,
                  orchestrator_settings: dict[str, Any] | None = None, mcp_risk: dict[str, str] | None = None,
                  budgets: dict[str, Any] | None = None, output_dir: str | Path | None = None, approvals_ask_from: str = "R3",
-                 skill_folders: list[str] | None = None):
-        self.db = Database(db_path)
+                 skill_folders: list[str] | None = None, backup_settings: dict[str, Any] | None = None):
+        self.backup_settings = {"every_hours": 24, "keep": 7, "retention_days": 90, "audit_days": 365, **(backup_settings or {})}
+        self.db = Database(db_path, backup_home=home, backup_keep=int(self.backup_settings["keep"]))
         self.output_dir = Path(output_dir) if output_dir else None      # A11.m.01: the user's output folder
         self.approvals_ask_from = approvals_ask_from                          # settings [approvals] ask_from
         self.skill_folders = list(skill_folders or [])                        # settings [skills] folders
@@ -249,6 +250,8 @@ class Engine:
                                      paused=lambda: bool(self.team and self.team.paused), leash=self.leash)
         self.spawn(self.presence.run(), name="presence")
         self.spawn(self._forward_board(), name="board-to-ui")
+        if self.home is not None:
+            self.spawn(self._upkeep(), name="backup-and-housekeeping")      # A16.c
         self.accepting = True
         self._stage("Ready", 1.0)
         self.signals.started.emit({"schema_version": self.db.schema_version})
@@ -474,6 +477,42 @@ class Engine:
                                    sender_type="system")
             return ""
         return await self.start_goal(goal, info)
+
+    # ── backup and housekeeping (A16.c) ────────────────────────────────────
+    async def backup_now(self, reason: str = "manual") -> str:
+        if self.home is None:
+            raise RuntimeError("no home folder: backups are off")
+        return str(await self.db.backup_to(self.home, reason, int(self.backup_settings["keep"])))
+
+    async def _upkeep(self, check_every: float = 3600.0, first_after: float = 120.0) -> None:
+        """Hourly: a daily backup when the last one is older than every_hours; a weekly housekeeping
+        pass while no bot is working. The first pass waits `first_after` s, so startup stays quick."""
+        from omnibots import backup
+        import time as _time
+        await asyncio.sleep(first_after)
+        while True:
+            try:
+                newest = next((b for b in backup.list_backups(self.home) if b["reason"] == "daily"), None)
+                age_h = ((_time.time() - Path(newest["path"]).stat().st_mtime) / 3600) if newest else 1e9
+                if age_h >= float(self.backup_settings["every_hours"]):
+                    await self.backup_now("daily")
+                row = await self.db.read_one("SELECT value FROM parameters WHERE scope='global' AND bot_id IS NULL AND key='last_housekeeping'")
+                last = float(row["value"]) if row and row["value"] else None
+                if last is None:                           # a new install: start the weekly clock, nothing to clean yet
+                    await self.db.write("INSERT INTO parameters (scope, bot_id, key, value) VALUES ('global', NULL, 'last_housekeeping', ?)",
+                                        (str(_time.time()),))
+                elif _time.time() - last >= 7 * 86400 and not self.runner.active:
+                    done = await self.db.housekeeping(float(self.backup_settings["retention_days"]),
+                                                      float(self.backup_settings["audit_days"]), vacuum=True)
+                    await self.db.write("DELETE FROM parameters WHERE scope='global' AND bot_id IS NULL AND key='last_housekeeping'")
+                    await self.db.write("INSERT INTO parameters (scope, bot_id, key, value) VALUES ('global', NULL, 'last_housekeeping', ?)",
+                                        (str(_time.time()),))
+                    await self.db.audit("system", None, "housekeeping", json.dumps(done))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("backup/housekeeping pass failed")
+            await asyncio.sleep(check_every)
 
     async def set_background_paused(self, on: bool) -> bool:
         return await self.leash.set_paused(on)
