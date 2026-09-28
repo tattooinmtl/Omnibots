@@ -196,10 +196,11 @@ async def retrospective(*, router, chain: list[str], store: PlaybookStore, boss_
         if playbook:
             await store.record_run(playbook.id, project_id=project_id, success=success, tokens=tokens, seconds=seconds)
             out["recorded"] = True
-        if success and playbook and not any(v.startswith("👎") for v in user_verdicts or []):
-            return out                  # the recipe worked as written; its stats say so (and you haven't said otherwise)
+        # A15.e.02: lessons after every goal, also the good ones (what to repeat), not only after failures
         from omnibots.runtime.context import today_line
         user = [f"GOAL:\n{goal}", f"OUTCOME: {'succeeded' if success else 'did not succeed'}", f"REPORT:\n{report[:12000]}"]
+        if success:
+            user.append("It went well: give lessons about what to REPEAT next time (not only what broke).")
         if user_verdicts:               # A16.b.02: the user's own verdicts count more than the bots' self-grading
             user.insert(0, "THE USER'S VERDICTS ON EARLIER RUNS OF THIS PLAYBOOK (newest first; they outweigh the bots' own "
                            "grading):\n" + "\n".join(f"- {v}" for v in user_verdicts))
@@ -214,7 +215,9 @@ async def retrospective(*, router, chain: list[str], store: PlaybookStore, boss_
             out["lessons"] = lessons
         pbd = data.get("playbook") if isinstance(data.get("playbook"), dict) else None
         if pbd and str(pbd.get("body") or "").strip():
-            if playbook:        # a failed run: an improved variant to A/B against the current one
+            if playbook and success:
+                pb = None           # the recipe worked: keep it; the run only adds lessons (A15.e.02)
+            elif playbook:      # a failed run: an improved variant to A/B against the current one
                 pb = await store.create(playbook.name, str(pbd["body"]), parent_id=playbook.id, variant=True, project_id=project_id)
             elif success:
                 pb = await store.create(str(pbd.get("name") or goal[:40]), str(pbd["body"]), project_id=project_id)

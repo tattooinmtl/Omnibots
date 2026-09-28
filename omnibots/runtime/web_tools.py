@@ -177,10 +177,12 @@ async def web_search(args: dict[str, Any], ctx: ToolContext) -> str:
         async with _client() as c:
             found = await gateway_search(c, query, category, n)
             if found and found != "(no results)" and not found.startswith("search failed"):
+                ctx.saw_outside = True
                 return wrap(found, source=f"web search: {query}")
             # DuckDuckGo's lite page challenges our (honest) user agent, so only its
             # Instant Answer API is used as the fallback.
             instant = await ddg_instant(c, query)
+            ctx.saw_outside = True
             return wrap(instant or found or "(no results)", source=f"web search: {query}")
     except httpx.HTTPError as exc:
         return f"ERROR: web_search failed: {exc}"
@@ -205,6 +207,7 @@ async def web_fetch(args: dict[str, Any], ctx: ToolContext) -> str:
     text = html_to_text(body) if "html" in res.headers.get("content-type", "") else body
     if len(text) > cap:
         text = text[:cap] + "\n…[truncated]"
+    ctx.saw_outside = True
     return wrap(text, source=str(res.url))
 
 

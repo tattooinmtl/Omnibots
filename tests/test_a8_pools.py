@@ -403,12 +403,14 @@ def test_retrospective_learns_and_makes_or_improves_playbooks(tmp_path):
             e = await build(tmp_path, mock)
             store = PlaybookStore(e["db"], e["bus"])
             boss = await e["reg"].get(BOSS_ID)
-            mock.script("plan", sse(retro), sse(json.dumps({"lessons": [], "playbook": {"name": "x", "body": PB_BODY + "\nfixed"}})))
+            mock.script("plan", sse(retro),
+                        sse(json.dumps({"lessons": ["Repeat: one provider per researcher"], "playbook": {"name": "x", "body": "ignored"}})),
+                        sse(json.dumps({"lessons": [], "playbook": {"name": "x", "body": PB_BODY + "\nfixed"}})))
             kw = dict(router=e["router"], chain=["plan/m"], store=store, boss_memory=boss.memory, goal="compare hosts",
                       report="# Report\nall good", project_id=None, tokens=5000, seconds=300)
             first = await retrospective(success=True, playbook=None, **kw)             # new playbook
             pb = first["playbook"]
-            worked = await retrospective(success=True, playbook=pb, **kw)              # recipe worked: stats only, no LLM
+            worked = await retrospective(success=True, playbook=pb, **kw)              # recipe worked: lessons, no new version
             failed = await retrospective(success=False, playbook=pb, **kw)             # improved variant
             lessons = boss.memory.section("Lessons Learned")
             calls = len([r for r in mock.requests if r["provider"] == "plan"])
@@ -420,7 +422,7 @@ def test_retrospective_learns_and_makes_or_improves_playbooks(tmp_path):
     assert first["lessons"] == ["Give each researcher one provider", "Check the date in reports"]
     assert any("one provider" in l for l in lessons)
     assert first["playbook"].name == "compare-hosting" and first["playbook"].status == "active"
-    assert worked["recorded"] and worked["playbook"] is None and calls == 2
+    assert worked["recorded"] and worked["playbook"] is None and calls == 3          # A15.e.02: lessons after every goal
     assert failed["playbook"].status == "variant" and failed["playbook"].parent_id == first["playbook"].id
     assert versions == {1: "active", 2: "variant"} and stats.runs == 2 and stats.successes == 1
 
