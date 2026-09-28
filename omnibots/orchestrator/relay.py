@@ -66,7 +66,8 @@ class RelayDesk:
         self.open[rid] = {"id": rid, "bot_id": bot_id, "job_id": job_id, "project_id": project_id, "tool": tool,
                           "args": args, "why": why, "future": fut, "at": time.time()}
         await self.bus.publish(topic_project(project_id) if project_id else topic_bot(BOSS_ID), "TOOL_REQUEST",
-                               {"text": f"{bot_id} asks for someone to run {tool}({json.dumps(args)[:300]}) because: {why[:300]}",
+                               {"text": f"Tool request {rid}: {bot_id} asks for someone to run {tool}({json.dumps(args)[:300]}) "
+                                        f"because: {why[:300]}",
                                 "request_id": rid, "tool": tool, "args": args, "why": why},
                                sender_type="bot", sender_id=bot_id, recipient_id=BOSS_ID, job_id=job_id, project_id=project_id)
         rep = (bot_id, project_id or "", tool)
@@ -94,7 +95,7 @@ class RelayDesk:
     async def relay(self, rid: str, holder_id: str) -> str:
         req = self.open.get(rid)
         if not req:
-            return f"ERROR: no open tool request {rid}"
+            return self._unknown(rid)
         if holder_id == BOSS_ID:
             return f"You hold it: call {req['tool']} yourself, then answer_tool_request(request_id='{rid}', result=…)."
         holder = await self.registry.get(holder_id)
@@ -129,15 +130,21 @@ class RelayDesk:
 
     async def answer(self, rid: str, text: str, *, by: str = BOSS_ID) -> str:
         if rid not in self.open:
-            return f"ERROR: no open tool request {rid}"
+            return self._unknown(rid)
         await self._close(rid, text, by=by)
         return f"answered {rid}"
 
     async def decline(self, rid: str, reason: str) -> str:
         if rid not in self.open:
-            return f"ERROR: no open tool request {rid}"
+            return self._unknown(rid)
         await self._close(rid, f"declined by Omi: {reason}")
         return f"declined {rid}"
+
+    def _unknown(self, rid: str) -> str:
+        """Found live in A14.a.02: Omi passed "the tool request above" as the id and never noticed. Name the open ones."""
+        waiting = [f"{r['id']} ({r['tool']} for {r['bot_id']})" for r in self.open.values()]
+        return (f"ERROR: no open tool request {rid!r}. " +
+                (f"Open requests: {', '.join(waiting)}. Call again with one of those ids." if waiting else "None are open now."))
 
     async def _close(self, rid: str, text: str, *, by: str | None = None, tell_omi: bool = False) -> None:
         req = self.open.get(rid)

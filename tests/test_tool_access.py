@@ -138,3 +138,32 @@ def test_omis_inbox_hears_a_tool_request(tmp_path):
             return heard
     heard = run(go())
     assert heard is not None and heard.message_type == "TOOL_REQUEST" and "run_shell" in heard.text()
+
+
+def test_omi_can_see_the_request_id_and_a_wrong_id_names_the_open_ones(tmp_path):
+    """Found live in A14.a.02: the TOOL_REQUEST text had no id, so Omi answered 'the tool request above' and the asking
+    bot waited 10 minutes for nothing."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            desk = RelayDesk(db=e["db"], bus=e["bus"], registry=e["reg"], runner=e["runner"], wait_seconds=5)
+            asker = await e["reg"].create("Tester", "tester", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            ask = asyncio.create_task(desk.request(bot_id=asker.id, job_id="j1", project_id=None, tool="run_shell",
+                                                   args={"command": "ver"}, why="check the OS"))
+            for _ in range(100):
+                await asyncio.sleep(0.01)
+                if desk.waiting():
+                    break
+            rid = desk.waiting()[0]["id"]
+            text = [m.text() for m in await query(e["db"], types=["TOOL_REQUEST"])][0]
+            wrong = await desk.answer("the tool request above", "Microsoft Windows")
+            right = await desk.answer(rid, "Microsoft Windows")
+            got = await ask
+            none_open = await desk.answer("tr_gone", "x")
+            await e["db"].close()
+            return rid, text, wrong, right, got, none_open
+    rid, text, wrong, right, got, none_open = run(go())
+    assert rid in text
+    assert wrong.startswith("ERROR") and rid in wrong and "run_shell" in wrong
+    assert right == f"answered {rid}" and "Microsoft Windows" in got
+    assert "None are open" in none_open
