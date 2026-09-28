@@ -20,7 +20,8 @@ from omnibots.board.types import topic_bot, topic_project
 from omnibots.runtime.tools import Tool, ToolContext
 
 INBOX_TYPES = {"A2A_MESSAGE", "TASK_ASSIGNED", "QUESTION", "CLAIM_SUBMITTED", "CLAIM_ACCEPTED", "CLAIM_REJECTED", "HELP_REQUEST",
-               "TASK_COMPLETED", "TASK_FAILED"}   # a worker finishing (or failing) lands in the boss's inbox
+               "TASK_COMPLETED", "TASK_FAILED",   # a worker finishing (or failing) lands in the boss's inbox
+               "TOOL_REQUEST"}                    # A8.d.02: found live in A14.a.02, Omi never heard a bot ask for a tool
 
 
 class Inbox:

@@ -20,7 +20,7 @@ from typing import Any
 # a Windows drive path, a UNC share, ~/, %USERPROFILE%, $HOME or a ..\ climb, written in text
 LOCAL_PATH = re.compile(r"""(?ix)(?<![\w/\\.])(
       [a-z]:[\\/][^\s'"|&<>;,)]*          # C:\Users\... or C:/Users/...
-    | \\\\[^\s'"|&<>;,)]+                 # \\server\share
+    | \\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+[^\s'"|&<>;,)]*   # \\server\share (a real share; not an escaped \\n in code)
     | ~[\\/][^\s'"|&<>;,)]*               # ~\Documents
     | %userprofile%[^\s'"|&<>;,)]*        # %USERPROFILE%\...
     | \$home[^\s'"|&<>;,)]*               # $HOME/...
@@ -54,6 +54,10 @@ def outside_paths(tool_name: str, args: dict[str, Any], workspace: Path) -> list
         found.append(str(p))
     field = TEXT_ARGS.get(tool_name)
     text = str(args.get(field) or "") if field else ""
+    # The project's own absolute path is inside, even though its folder name has spaces (found live, A14.a.02:
+    # "C:\…\projects\2026-09-28 Build a small…" was cut at the space and read as the parent folder).
+    for form in {str(ws), ws.as_posix(), str(ws).replace("\\", "\\\\")}:
+        text = re.sub(re.escape(form), ".", text, flags=re.I)
     for m in LOCAL_PATH.finditer(text):
         raw = m.group(1).rstrip(".")
         if raw and _outside(ws, raw) and raw not in found:

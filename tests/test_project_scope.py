@@ -80,3 +80,14 @@ def test_leaving_the_project_asks_even_when_r3_would_run_silently(tmp_path):
     assert all(s["summary"].startswith("leaves the project folder") for s in seen)
     assert "fine" in results[0] and results[1].startswith("DENIED") and results[2].startswith("DENIED")
     assert "private" not in "".join(results)
+
+
+def test_the_projects_own_path_with_spaces_and_escaped_newlines_are_not_outside(tmp_path):
+    """Found live in A14.a.02: both were taken for places outside the project."""
+    ws = tmp_path / "projects" / "2026-09-28 Build a small to-do web app"
+    ws.mkdir(parents=True)
+    code = (f"import os\nroot = r'{ws}'\nprint(open(os.path.join(root, 'todos.json')).read())\n"
+            f"print('a\\nb')\nprint(os.listdir(r'{ws.as_posix()}/static'))\n")
+    assert outside_paths("run_python", {"code": code}, ws) == []
+    assert outside_paths("run_python", {"code": f"open(r'{ws.parent}\\other project\\x.txt')"}, ws) != []   # a sibling is still outside
+    assert outside_paths("run_shell", {"command": "type \\\\fileserver\\share\\notes.txt"}, ws) == ["\\\\fileserver\\share\\notes.txt"]

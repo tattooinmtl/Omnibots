@@ -115,3 +115,26 @@ def test_a_bot_above_its_ceiling_is_refused_and_existing_bots_keep_their_tools(t
     out, refused, raised, after, old = run(go())
     assert out.status == "completed" and refused.startswith("REFUSED: web_search is R2, above your limit (R1)")
     assert after == "R3" and any(old.id in r for r in raised)                      # git_push is R3: kept usable
+
+
+def test_omis_inbox_hears_a_tool_request(tmp_path):
+    """Found live in A14.a.02: TOOL_REQUEST wasn't among the inbox types, so Omi waiting in wait_for_mention never
+    saw it and the asking bot timed out."""
+    from omnibots.board.a2a import Inbox
+
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            desk = RelayDesk(db=e["db"], bus=e["bus"], registry=e["reg"], runner=e["runner"], wait_seconds=5)
+            asker = await e["reg"].create("Tester", "tester", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            inbox = await Inbox.open(e["bus"], BOSS_ID)
+            ask = asyncio.create_task(desk.request(bot_id=asker.id, job_id="j1", project_id="p1", tool="run_shell",
+                                                   args={"command": "python -m unittest"}, why="run the tests"))
+            heard = await inbox.sub.get(timeout=3)
+            await desk.decline(desk.waiting()[0]["id"], "test over")
+            await ask
+            inbox.close()
+            await e["db"].close()
+            return heard
+    heard = run(go())
+    assert heard is not None and heard.message_type == "TOOL_REQUEST" and "run_shell" in heard.text()

@@ -172,3 +172,29 @@ def test_a_job_carried_on_unblocks_what_depends_on_it(tmp_path):
             return before, after
     before, after = run(go())
     assert before == "blocked" and after == "pending"
+
+
+def test_a_bigger_goal_gets_its_review_even_when_omi_skipped_it(tmp_path):
+    """A15.a.07 backed by code: found live in A14.a.02, a 4-file app went unreviewed. A trivial goal may skip it."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            orch = e["orch"]
+            orch.planner_chain = ["plan/m"]
+            mock.script("plan", sse("VERDICT: PASS\nfindings: none"))
+            big = await e["projects"].create("a to-do app")
+            for name in ("app.py", "index.html", "test_app.py", "README.md"):
+                (e["projects"].folder(big) / name).write_text(f"# {name}\n", encoding="utf-8")
+            await e["projects"].commit(big, "the team's work", author="bot")      # jobs commit their work, as in the app
+            small = await e["projects"].create("one note")
+            (e["projects"].folder(small) / "note.md").write_text("hi\n", encoding="utf-8")
+            ctx = SimpleNamespace(goal="a to-do app")
+            v_big = await orch._review_if_skipped(big, ctx)
+            v_again = await orch._review_if_skipped(big, ctx)          # reviewed now: not twice
+            v_small = await orch._review_if_skipped(small, SimpleNamespace(goal="one note"))
+            reviews = [m.text() for m in await query(e["db"], project=big, types=["REVIEW_RESULT"])]
+            await e["db"].close()
+            return v_big, v_again, v_small, reviews
+    v_big, v_again, v_small, reviews = run(go())
+    assert v_big == "PASS" and v_again is None and v_small is None
+    assert len(reviews) == 1 and "automatic: Omi skipped the review" in reviews[0]
