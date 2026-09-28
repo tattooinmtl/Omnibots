@@ -178,7 +178,7 @@ class TeamPresence:
             if text:
                 self._notes.setdefault(bot_id, []).append(text)
         elif (bot_id == BOSS_ID and m.recipient_id == BOSS_ID and m.project_id and m.sender_type == "bot"
-              and m.message_type in ("CLAIM_SUBMITTED", "HELP_REQUEST", "A2A_MESSAGE", "BLOCKED")
+              and m.message_type in ("CLAIM_SUBMITTED", "HELP_REQUEST", "A2A_MESSAGE", "BLOCKED", "TOOL_REQUEST")
               and getattr(self.orchestrator, "keep_working", False)):
             # A15.d.01: a worker that outlived Omi's round reports; Omi needs a round to decide on it
             self._for_omi[m.project_id] = f"{m.sender_id} sent a {m.message_type.lower().replace('_', ' ')} while you were between rounds."

@@ -212,6 +212,12 @@ def main(argv: list[str] | None = None) -> int:
         claim = int(m.group(1)) if m.group(1) else None
         return later(engine.rate(pid, verdict, m.group(3).strip(), claim), lambda r: {"ok": True, **r}, timeout=10)
 
+    def cmd_ceiling(msg):
+        bot, level = str(msg.get("id") or ""), str(msg.get("text") or "").strip().upper()
+        if not bot or not level:
+            return {"ok": False, "error": "ceiling needs --id <bot> and --text R0..R5"}
+        return later(engine.set_risk_ceiling(bot, level), lambda r: {"ok": True, "bot": bot, "ceiling": r}, timeout=10)
+
     def cmd_budget(_msg):
         return later(engine.budget.snapshot(), lambda b: {"ok": True, "budget": b}, timeout=10)
 
@@ -226,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
          "pause": team_cmd("pause"), "resume": team_cmd("resume"), "halt": team_cmd("stop"), "start": team_cmd("start"),
          "restart": team_cmd("restart"), "panic": lambda m: later(engine.team.stop(panic=True), lambda r: {"ok": True, **r}, timeout=60),
          "pause_bot": team_cmd("pause_bot"), "resume_bot": team_cmd("resume_bot"), "stop_bot": team_cmd("stop_bot"),
-         "preapprove": cmd_preapprove, "budget": cmd_budget, "rate": cmd_rate, "snapshot": cmd_snapshot, "tray": cmd_tray},
+         "preapprove": cmd_preapprove, "budget": cmd_budget, "rate": cmd_rate, "ceiling": cmd_ceiling, "snapshot": cmd_snapshot, "tray": cmd_tray},
     )
     if not instance.acquire():
         reply = send_command({"cmd": "show"})

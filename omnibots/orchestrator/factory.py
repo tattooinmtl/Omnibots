@@ -101,6 +101,15 @@ class BotFactory:
                 return list(CHEAP_FIRST), "cheap (the MiniMax budget is 90%+ used)"
         return (list(MINIMAX_FIRST), "minimax") if lane != "cheap" else (list(CHEAP_FIRST), "cheap")
 
+    risk_of = None                        # name -> base risk (set by the engine from the tool pool)
+
+    def ceiling_for(self, tools: list[str]) -> str:
+        """A8.d.03: the highest base risk among the bot's tools, never above R3 without the user."""
+        order = ["R0", "R1", "R2", "R3", "R4", "R5"]
+        risks = [self.risk_of(t) for t in tools] if self.risk_of else []
+        top = max([order.index(r) for r in risks if r in order] or [order.index("R2")])
+        return order[min(top, order.index("R3"))]
+
     async def create(self, *, name: str, role: str, description: str = "", skills: list[str] | None = None,
                      tools: list[str] | None = None, lane: str = "minimax", goal: str | None = None,
                      created_by: str = "omi") -> tuple[BotProfile, str]:
@@ -110,6 +119,6 @@ class BotFactory:
         tools += [t for t in ("find_skill", "invoke_skill", "ask_help") if t not in tools]   # every worker can learn and ask
         chain, lane_used = self.lane_chain(lane)
         prof = await self.registry.create(name, role, description=description, skills=skills or [], tools=tools,
-                                          chain=chain, created_by=created_by, risk_ceiling="R2")
+                                          chain=chain, created_by=created_by, risk_ceiling=self.ceiling_for(tools))
         self.governor.record(goal)
         return prof, lane_used

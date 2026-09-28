@@ -1,0 +1,117 @@
+"""A8.d tool access (user decision 2026-09-27: keep the tool rule). Search by default; the tool relay (a bot
+asks, Omi routes, a holder runs just that tool, the answer comes back); risk ceilings enforced on a tool's
+base risk. Real runner, sandbox, board and database; the mock model."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from types import SimpleNamespace
+
+from mock_provider import MockProviders, sse
+from test_a7_orchestrator import build, call
+
+from omnibots.board.query import query
+from omnibots.bots.profile import BOSS_ID, BOSS_TOOLS, DEFAULT_TOOLS
+from omnibots.engine import Engine
+from omnibots.orchestrator.relay import MAX_PER_JOB, RelayDesk
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+def test_search_is_a_default_sense_for_new_bots_and_omi(tmp_path):
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            await e["db"].write("DELETE FROM bot_tools WHERE bot_id=? AND tool_id IN ('web_search','web_fetch')", (BOSS_ID,))
+            omi = await e["reg"].ensure_boss()                     # an older Omi gets search too
+            bot, _ = await e["factory"].create(name="Researcher", role="researcher", tools=None)
+            await e["db"].close()
+            return omi, bot
+    omi, bot = run(go())
+    assert {"web_search", "web_fetch"} <= set(DEFAULT_TOOLS) and {"web_search", "web_fetch"} <= set(BOSS_TOOLS)
+    assert {"web_search", "web_fetch"} <= set(omi.tools) and {"web_search", "web_fetch"} <= set(bot.tools)
+    assert "run_shell" not in bot.tools and "git_push" not in bot.tools                  # still not every tool
+
+
+def test_the_relay_runs_the_tool_on_a_holder_and_the_answer_comes_back(tmp_path):
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            desk = RelayDesk(db=e["db"], bus=e["bus"], registry=e["reg"], runner=e["runner"], projects=e["projects"], home=tmp_path)
+            e["runner"].relay = desk
+            asker = await e["reg"].create("Writer", "writer", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            holder = await e["reg"].create("Shell", "devops", chain=["plan/m"], tools=[*DEFAULT_TOOLS, "run_shell"], risk_ceiling="R3")
+            pid = await e["projects"].create("a site")
+            folder = e["projects"].folder(pid)
+            mock.script("work", sse("", tool_calls=[call("request_tool", tool="run_shell", args={"command": "echo relayed-ok"},
+                                                          why="I need the shell output")]), sse("Got it: relayed-ok."))
+            mock.script("plan", sse("", tool_calls=[call("run_shell", command="echo relayed-ok")]), sse("It printed relayed-ok."))
+            task = asyncio.create_task(e["runner"].run(asker.id, "check the shell", project_id=pid, workspace=folder))
+            for _ in range(300):
+                await asyncio.sleep(0.02)
+                if desk.waiting(pid):
+                    break
+            (req,) = desk.waiting(pid)
+            relayed = await desk.relay(req["id"], holder.id)                         # what Omi does with relay_tool
+            out = await asyncio.wait_for(task, 60)
+            await asyncio.wait_for(desk.jobs[req["id"]], 60)
+            asker_tool_msgs = [m["content"] for r in mock.requests if r["provider"] == "work" for m in r["body"]["messages"] if m.get("role") == "tool"]
+            holder_tools = {t["function"]["name"] for t in next(r for r in mock.requests if r["provider"] == "plan")["body"].get("tools", [])}
+            board = [m.message_type for m in await query(e["db"], limit=100)]
+            origin = (await e["db"].read_one("SELECT origin FROM jobs WHERE assigned_bot_id=?", (holder.id,)))["origin"]
+            await e["db"].close()
+            return relayed, out, asker_tool_msgs, holder_tools, board, origin, holder
+    relayed, out, msgs, holder_tools, board, origin, holder = run(go())
+    assert relayed.startswith("relayed") and out.status == "completed"
+    assert any("run_shell result (run by" in m and "relayed-ok" in m for m in msgs)
+    assert holder_tools == {"run_shell"}                                           # only that tool: no chains, nothing else
+    assert "TOOL_REQUEST" in board and "TOOL_RESULT" in board and origin == "relay"
+
+
+def test_the_relays_limits(tmp_path):
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            desk = RelayDesk(db=e["db"], bus=e["bus"], registry=e["reg"], runner=e["runner"], wait_seconds=0.3)
+            asker = await e["reg"].create("Writer", "writer", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            ask = lambda tool, job="job_1": desk.request(bot_id=asker.id, job_id=job, project_id=None, tool=tool, args={}, why="x")
+            boss_only, mine, unknown = await ask("assign_job"), await ask("web_fetch"), await ask("teleport")
+            timed_out = await ask("run_shell")                                     # nobody answers within 0.3 s
+            task = asyncio.create_task(ask("git_push", job="job_2"))
+            for _ in range(100):
+                await asyncio.sleep(0.01)
+                if desk.waiting():
+                    break
+            declined_id = desk.waiting()[0]["id"]
+            await desk.decline(declined_id, "not needed for this job")
+            declined = await task
+            desk._per_job["job_3"] = MAX_PER_JOB
+            capped = await ask("run_shell", job="job_3")
+            await e["db"].close()
+            return boss_only, mine, unknown, timed_out, declined, capped
+    boss_only, mine, unknown, timed_out, declined, capped = run(go())
+    assert "can't be relayed" in boss_only and "you have web_fetch yourself" in mine and "no tool called" in unknown
+    assert timed_out.startswith("no answer") and "declined by Omi: not needed" in declined and "already asked" in capped
+
+
+def test_a_bot_above_its_ceiling_is_refused_and_existing_bots_keep_their_tools(tmp_path):
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            low = await e["reg"].create("Careful", "writer", chain=["work/m"], tools=list(DEFAULT_TOOLS), risk_ceiling="R1")
+            mock.script("work", sse("", tool_calls=[call("web_search", query="bakeries")]), sse("done"))
+            out = await e["runner"].run(low.id, "look it up")
+            refused = [m["content"] for m in mock.requests[-1]["body"]["messages"] if m.get("role") == "tool"][0]
+            old = await e["reg"].create("Old", "devops", chain=["work/m"], tools=[*DEFAULT_TOOLS, "git_push"], risk_ceiling="R2")
+            eng = SimpleNamespace(db=e["db"], registry=e["reg"], runner=e["runner"])
+            eng._tool_risk = lambda n: Engine._tool_risk(eng, n)
+            raised = await Engine._fit_ceilings(eng)
+            after = (await e["reg"].get(old.id)).risk_ceiling
+            await e["db"].close()
+            return out, refused, raised, after, old
+    out, refused, raised, after, old = run(go())
+    assert out.status == "completed" and refused.startswith("REFUSED: web_search is R2, above your limit (R1)")
+    assert after == "R3" and any(old.id in r for r in raised)                      # git_push is R3: kept usable

@@ -132,6 +132,7 @@ class JobRunner:
                  locks=None, skill_pool=None, media_tools: list[Tool] | None = None, mcp=None, vault=None, budget=None):
         self.db, self.registry, self.router, self.approvals = db, registry, router, approvals
         self.home, self.sandbox, self.bus, self.ledger, self.keep_awake = home, sandbox, bus, ledger, keep_awake
+        self.relay = None                                   # orchestrator.relay.RelayDesk (A8.d.02), set by the engine
         self.listener, self.learn = listener, learn
         self.lesson_chain = lesson_chain or list(CHEAP_FIRST)
         self.memory_limit = memory_limit
@@ -232,10 +233,19 @@ class JobRunner:
                     await emit("console", f"⚠ MCP server {server} is unavailable: {exc}")
         return out
 
-    def tools_for(self, prof: BotProfile, inbox: Inbox | None, project_id: str | None) -> ToolRegistry:
-        """A bot only gets the tools it was assigned (A8.b.03), plus the board tools of its role."""
+    def tools_for(self, prof: BotProfile, inbox: Inbox | None, project_id: str | None,
+                  only_tools: list[str] | None = None) -> ToolRegistry:
+        """A bot only gets the tools it was assigned (A8.b.03), plus the board tools of its role.
+        `only_tools` (a relay job, A8.d.02): just those of its own tools, nothing else (no chains)."""
+        if only_tools is not None:
+            reg = self.pool(boss=prof.is_boss).subset([t for t in only_tools if t in prof.tools])
+            reg.vault = self.vault
+            return reg
         reg = self.pool(boss=prof.is_boss).subset(prof.tools)
         reg.vault = self.vault
+        if self.relay is not None and not prof.is_boss:
+            from omnibots.orchestrator.relay import request_tool_tool
+            reg.add(request_tool_tool(self.relay, project_id=project_id))             # A8.d.02
         if self.bus and inbox:
             for t in a2a_tools(self.bus, inbox, bot_id=prof.id, boss_id=BOSS_ID, project_id=project_id,
                                is_active=lambda b: b in self.active):
@@ -296,7 +306,8 @@ class JobRunner:
     async def run(self, bot_id: str, task: str, *, title: str | None = None, job_id: str | None = None,
                   project_id: str | None = None, workspace: Path | None = None, chain: list[str] | None = None,
                   budget: dict[str, Any] | None = None, extra_tools: list[Tool] | None = None,
-                  max_iterations: int | None = None, inbox: Inbox | None = None, origin: str | None = None) -> JobOutcome:
+                  max_iterations: int | None = None, inbox: Inbox | None = None, origin: str | None = None,
+                  only_tools: list[str] | None = None, summary_prefix: str = "") -> JobOutcome:
         """Run one job. `job_id` may be an existing (graph) job: it's restarted as a new attempt.
         `workspace`: a shared project folder instead of the bot's own. `chain`: override the
         profile's providers (the night shift uses the cheap lane). `budget`: {"tokens", "seconds"}.
@@ -308,7 +319,8 @@ class JobRunner:
         try:
             return await self._run_held(bot_id, task, title=title, job_id=job_id, project_id=project_id,
                                         workspace=workspace, chain=chain, budget=budget, extra_tools=extra_tools,
-                                        max_iterations=max_iterations, inbox=inbox, origin=origin)
+                                        max_iterations=max_iterations, inbox=inbox, origin=origin,
+                                        only_tools=only_tools, summary_prefix=summary_prefix)
         finally:
             CURRENT_ORIGIN.set(outer)                          # _run_held set this run's origin; the caller's comes back
             self._starting.discard(bot_id)
@@ -316,7 +328,8 @@ class JobRunner:
     async def _run_held(self, bot_id: str, task: str, *, title: str | None = None, job_id: str | None = None,
                         project_id: str | None = None, workspace: Path | None = None, chain: list[str] | None = None,
                         budget: dict[str, Any] | None = None, extra_tools: list[Tool] | None = None,
-                        max_iterations: int | None = None, inbox: Inbox | None = None, origin: str | None = None) -> JobOutcome:
+                        max_iterations: int | None = None, inbox: Inbox | None = None, origin: str | None = None,
+                        only_tools: list[str] | None = None, summary_prefix: str = "") -> JobOutcome:
         prof = await self.registry.get(bot_id)
         if not prof or prof.status == "archived":
             raise ValueError(f"no active bot {bot_id}")
@@ -346,7 +359,7 @@ class JobRunner:
                                    job_id=job_id, project_id=project_id)
         own_inbox = inbox is None
         inbox = inbox or (await Inbox.open(self.bus, bot_id) if self.bus else None)
-        tools = self.tools_for(prof, inbox, project_id)
+        tools = self.tools_for(prof, inbox, project_id, only_tools=only_tools)
         events = BotEvents(bot_id, self.db, listener=self._listen)
         if origin != "user":
             await events.emit("console", f"▶ started on its own: {WHY.get(origin, origin)}")
@@ -356,7 +369,8 @@ class JobRunner:
                          chain=chain or provider_chain(prof), tools=tools, approvals=self.approvals,
                          events=events, sandbox=self.sandbox,
                          system_prompt=self.system_prompt(prof), max_iterations=max_iterations or int(prof.limits.get("max_iterations", 40)),
-                         priority="boss" if prof.is_boss else "work", token_budget=budget.get("tokens"), budget=self.budget)
+                         priority="boss" if prof.is_boss else "work", token_budget=budget.get("tokens"), budget=self.budget,
+                         risk_ceiling=prof.risk_ceiling or None, summary_prefix=summary_prefix)
         self.active[bot_id] = agent
         self.tasks[bot_id] = asyncio.current_task()
         self.last_activity[bot_id] = time.monotonic()

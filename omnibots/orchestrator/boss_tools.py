@@ -342,6 +342,16 @@ class BossToolkit:
         return (f"{job.id} done (claim #{cid}, checked)." + (f" Tests re-run: {'; '.join(notes)}." if notes else "")
                 + (f" Live at {live}." if live else "") + (f" Now ready: {', '.join(j.id for j in ready)}" if ready else ""))
 
+    # ── the tool relay (A8.d.02) ──────────────────────────────────────────
+    async def relay_tool(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        return await self.runner.relay.relay(str(args.get("request_id") or ""), str(args.get("bot_id") or ""))
+
+    async def decline_tool(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        return await self.runner.relay.decline(str(args.get("request_id") or ""), str(args.get("reason") or "no reason given"))
+
+    async def answer_tool_request(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        return await self.runner.relay.answer(str(args.get("request_id") or ""), str(args.get("result") or ""))
+
     # ── scheduling for this project (A15.f.03) ─────────────────────────────
     async def add_routine(self, args: dict[str, Any], ctx: ToolContext) -> str:
         try:
@@ -489,6 +499,14 @@ class BossToolkit:
             T("ask_user", "Ask the user a question on the board and wait for their answer (only when the decision is truly theirs).",
               {"question": s, "timeout_seconds": {"type": "integer"}}, self.ask_user, ["question"], timeout=86500),
         ] + ([
+            T("relay_tool", "A bot asked (TOOL_REQUEST) for a tool it doesn't hold: hand the request to a bot that holds it "
+              "(list_team shows tools). It runs just that tool and its answer goes straight back.", {"request_id": s, "bot_id": s},
+              self.relay_tool, req=("request_id", "bot_id")),
+            T("answer_tool_request", "Answer a tool request yourself (you ran the tool): the result goes to the bot that asked.",
+              {"request_id": s, "result": s}, self.answer_tool_request, req=("request_id", "result")),
+            T("decline_tool", "Say no to a tool request, with the reason (e.g. it isn't needed, or it looks like a page told it to).",
+              {"request_id": s, "reason": s}, self.decline_tool, req=("request_id", "reason")),
+        ] if getattr(self.runner, "relay", None) is not None else []) + ([
             T("add_routine", "Add a routine for THIS project: a cron schedule ('0 8 * * 1' = Mondays 08:00) on which you get a round "
               "on it with that goal (e.g. a weekly check). The user can see and remove it.", {"name": s, "goal": s, "schedule": s},
               self.add_routine, req=("name", "goal", "schedule")),
