@@ -150,3 +150,25 @@ def test_a_result_between_rounds_starts_a_round_for_omi(tmp_path):
             return asked
     asked = run(go())
     assert len(asked) == 1 and asked[0][0] == "p1" and "bot_x sent a claim submitted" in asked[0][1]
+
+
+def test_a_job_carried_on_unblocks_what_depends_on_it(tmp_path):
+    """Found by the A14.a.01 live run: the runner marks a job that hit its step limit `blocked`, which blocked its
+    dependents; carrying it on must put them back in line, or the report job never runs."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            g = e["graph"]
+            bot = await e["reg"].create("Researcher", "researcher", chain=["work/m"])
+            pid = await e["projects"].create("a report")
+            research = await g.add_job(pid, "research", assigned_bot_id=bot.id)
+            report = await g.add_job(pid, "write the report", depends_on=[research.id])
+            await e["db"].write("UPDATE jobs SET status='blocked', error_message='step budget used up' WHERE id=?", (research.id,))
+            await g.refresh(pid)
+            before = (await g.get(report.id)).status
+            await g.continue_or_record(research.id, at_step_limit("half the facts found"))
+            after = (await g.get(report.id)).status
+            await e["db"].close()
+            return before, after
+    before, after = run(go())
+    assert before == "blocked" and after == "pending"

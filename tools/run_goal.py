@@ -43,10 +43,10 @@ from omnibots.runtime.sandbox import Sandbox  # noqa: E402
 
 SHOW = {"TASK_PLANNED", "BOT_CREATED", "TASK_ASSIGNED", "WORK_STARTED", "CLAIM_SUBMITTED", "CLAIM_ACCEPTED", "CLAIM_REJECTED",
         "A2A_MESSAGE", "QUESTION", "COUNCIL_VERDICT", "REVIEW_RESULT", "TASK_COMPLETED", "TASK_FAILED", "ARTIFACT_READY",
-        "SEAT_WAITING", "APPROVAL_REQUEST"}
+        "SEAT_WAITING", "APPROVAL_REQUEST", "TOOL_REQUEST", "TOOL_RESULT"}
 
 
-async def main(goal: str, home: Path, minutes: float) -> int:
+async def main(goal: str, home: Path, minutes: float, learn: bool = True) -> int:
     for s in (sys.stdout, sys.stderr):
         s.reconfigure(encoding="utf-8", errors="replace")
     setup_logging(home / "logs")
@@ -70,8 +70,11 @@ async def main(goal: str, home: Path, minutes: float) -> int:
     pools = runner_pools(lambda: cfg, home, router, LeaseManager(db, bus),
                          tomllib.loads(DEFAULT_SETTINGS_TOML)["mcp_risk"])
     runner = JobRunner(db=db, registry=reg, router=router, approvals=approvals, home=home, sandbox=Sandbox(home / "sandbox"),
-                       bus=bus, ledger=ledger, listener=console, learn=False, **pools)
+                       bus=bus, ledger=ledger, listener=console, learn=learn, **pools)
+    from omnibots.orchestrator.relay import RelayDesk                  # the tool relay, as in the app (A8.d.02)
+    runner.relay = RelayDesk(db=db, bus=bus, registry=reg, runner=runner, home=home)
     projects, graph = ProjectStore(db, home / "projects", bus), TaskGraph(db, bus)
+    runner.relay.projects = projects
     orch = Orchestrator(db=db, bus=bus, registry=reg, runner=runner, graph=graph, projects=projects, ledger=ledger, router=router,
                         factory=BotFactory(reg, SpawnGovernor(), db=db, quota=quota), skills=lambda: cfg.skills,
                         goal_seconds=minutes * 60, playbooks=PlaybookStore(db, bus))
@@ -84,6 +87,11 @@ async def main(goal: str, home: Path, minutes: float) -> int:
                 to = f" → {m.recipient_id}" if m.recipient_id else ""
                 print(f"{time.time() - t0:6.0f}s  {m.sender_id or m.sender_type}{to}  [{m.message_type}]  {m.text()[:220]}", flush=True)
     watcher = asyncio.create_task(board())
+    # the listen loop, as in the app (A7.a.15): a job that carries on to its next round (A15.d.03) is picked up
+    from omnibots.bots.presence import TeamPresence
+    presence = TeamPresence(db=db, bus=bus, registry=reg, runner=runner, graph=graph, projects=projects, orchestrator=orch,
+                            poll_seconds=5.0, maintain=lambda pid, changes: asyncio.sleep(0))
+    listening = asyncio.create_task(presence.run())
 
     async def auto_approve_nothing():                   # this harness never grants R3+; it denies and says so
         while True:
@@ -97,6 +105,7 @@ async def main(goal: str, home: Path, minutes: float) -> int:
     res = await orch.run_goal(goal)
     watcher.cancel()
     guard.cancel()
+    listening.cancel()
     await pools["mcp"].close()
     if orch.last_retro:
         pb = orch.last_retro.get("playbook")
@@ -114,6 +123,7 @@ if __name__ == "__main__":
     ap.add_argument("goal")
     ap.add_argument("--home", default="")
     ap.add_argument("--minutes", type=float, default=20)
+    ap.add_argument("--no-learn", action="store_true", help="don't write lessons to the bots' memory after jobs")
     a = ap.parse_args()
     home = Path(a.home) if a.home else Path(tempfile.mkdtemp(prefix="omnibots-goal-"))
-    sys.exit(asyncio.run(main(a.goal, home, a.minutes)))
+    sys.exit(asyncio.run(main(a.goal, home, a.minutes, learn=not a.no_learn)))

@@ -616,7 +616,7 @@ At a glance, the user can see who's stuck.
 - **A8.d.03** ✅ **`risk_ceiling` is enforced.** Today it's stored (the factory always writes R2) and nothing reads it. `tools.run` refuses a call whose tool risk is above the bot's ceiling (an error the model sees, logged). The factory sets the ceiling to the highest risk among the tools it gave the bot, never above R3 without the user. The user raises or lowers it in the bot editor. In a relay, the holder's ceiling applies.
 - ~~**A8.d.04** Every bot gets every tool; the profile list is only a preference (Grok F2).~~ ⛔ Dropped (user, 2026-09-27: keep the tool rule). Replaced by A8.d.01 + A8.d.02.
 - ~~**A8.d.05** Forged tools may use the network and R3 after the reviewer passes them (Grok F2).~~ ⛔ Dropped (2026-09-27, with Claude's recommendation the user followed): forged tools are model-written code; R0–R2 and no network in the sandbox test stays (A10.b.01).
-- **A8.d.06** ⏳ **A bot may read its own dev server** (Grok F9). `web_fetch` and the browser accept `localhost`/`127.0.0.1` on a port that bot's own process started, without the `allow_internal` argument it has to remember. Every other private address stays refused. The gateway's 30-a-minute limit shows in the tool error, so the bot switches to `web_fetch` on a known URL instead of retrying.
+- **A8.d.06** ⛔ (2026-09-28, Claude; the user said "finish it all": not applicable yet, see the A8.d notes) **A bot may read its own dev server** (Grok F9). `web_fetch` and the browser accept `localhost`/`127.0.0.1` on a port that bot's own process started, without the `allow_internal` argument it has to remember. Every other private address stays refused. The gateway's 30-a-minute limit shows in the tool error, so the bot switches to `web_fetch` on a known URL instead of retrying.
 - **A8.d.99** 🟡 **Acceptance (live, real providers):**
   - A brand-new worker with no tool list searches the web; Omi searches too.
   - A worker without the browser tools asks for `browser_navigate` on a URL; Omi relays it to a bot that holds them; the page text comes back to the first worker as `TOOL_RESULT`, and the board shows `TOOL_REQUEST` → relay → `TOOL_RESULT`.
@@ -633,6 +633,7 @@ At a glance, the user can see who's stuck.
   - A8.d.06 not done: reading a bot's own dev server without the `allow_internal` flag safely needs to know the port belongs to a process the bot started (a process-to-port lookup; `psutil` would do it but isn't a dependency). Today the refusal message tells the bot to pass `allow_internal: true`, which works. User decides.
   - Tests: `tests/test_tool_access.py` (4, including a real sandbox relay), `tests/test_a8d_live.py` (2 live: relay + a new bot searching; both pass). `test_a9_approvals_budgets::test_r4_spend_caps_and_replay_exact` now gives its buyers an R4 ceiling (money tools need it, and every purchase still asks). Full suite: 485 passed, 28 skipped.
   - A8.d.99 still open: Omi routing a live request by itself in a whole goal, and an R3+ relayed card seen with ask_from R3.
+  - 2026-09-28 A8.d.06 ⛔ not applicable yet: `run_shell` waits for its command and the sandbox kills the process tree when it ends, so a bot can't leave a dev server running between tool calls; there's no "own dev server" to read later. Checking port ownership (psutil) would add a dependency for nothing. The `allow_internal` flag stays for a server started and read in one command. Revisit when bots can run background processes.
 
 **Notes:**
 - 2026-09-27 Claude: added **A8.d** (tool access) from `grok_audit.md` F2, per the user's decision: keep the tool rule; search by default; a tool relay on the board instead of Grok's "all tools for all bots"; enforce `risk_ceiling`. Cross-phase: ADR-10 exception, two new message types in §4.3. Not started.
@@ -1064,7 +1065,7 @@ _(empty)_
 - **A15.f.01** ✅ **Health check on the live URL** (A15.c.03) on a schedule while the project is open. On failure: Watch → a report on the board and a tray note; Fix → a repair job (origin `routine`).
 - **A15.f.02** ✅ **Close project** (tray, the project list, and a boss tool) sets `cancelled`, stops its routines and triggers. It's the only thing that ends the watching.
 - **A15.f.03** ✅ **Boss tools `add_routine`, `add_trigger`, `enqueue_night`**, and the night queue moves to SQL (today it's in memory and only tests fill it).
-- **A15.f.04** 🟡 **A bot's VPS computer stays up** while its project is open, on Fix, and within budget; otherwise the 15-minute idle stop applies.
+- **A15.f.04** ✅ **A bot's VPS computer stays up** while its project is open, on Fix, and within budget; otherwise the 15-minute idle stop applies.
 
 **A15.f Notes:**
 - 2026-09-28 Claude: PASSED A15.f.01–03 (A15.f.04, the VPS computer staying up, changes the user's server: waiting for the user)
@@ -1078,6 +1079,8 @@ _(empty)_
 - **A15.g.01** ✅ **"While you were away" card** when the app opens: what the bots did on their own since you last looked (checks, fixes, tokens per project, anything waiting for you).
 - **A15.g.02** ✅ **A "why" on every background action** on the board: what started it (the origin from A15.b.01 plus the file, routine or request).
 - **A15.g.03** ✅ **"On their own today" strip** in Omi's window: what's running in the background, its tokens, a pause button per project.
+
+- 2026-09-28 Claude: PASSED A15.f.04. The gateway (`deploy/bot-computers/gateway/app.py`) stops a computer after IDLE_MIN idle minutes and counts ANY request from the bot as use, so no server change was needed: `engine.keep_desks` (every 5 min) checks in (`GET /computer`) for bots on open, **Fix** projects with a computer login and background tokens left today; that keeps a running computer up. It never starts one, never creates a login (bots without one are skipped), and does nothing while background work is paused. Tests: `tests/test_keep_desks.py`. Nothing deployed.
 
 **A15.g Notes:**
 - 2026-09-28 Claude: PASSED A15.g.01–03
@@ -1119,6 +1122,15 @@ _(empty)_
 - **A16.b.03** ✅ **It shows**: per bot and per provider, the share of 👍 over time (feeds A13 and the bot editor).
 - **A16.b.99** 🟡 **Acceptance:** a 👎 with a note on a goal changes the next run of that playbook, and the bot's memory quotes the note.
 
+**A16.d / A16.e Notes:**
+- 2026-09-28 Claude: PASSED A16.d.01 (A16.d.99, a real N → N+1 update, runs at the next release: GitHub still says 0.x of this build)
+  - `omnibots/updater.py` (new): `install_layout()` tells an installer copy (a git clone with its own `.venv` the app runs from, and `install.ps1`) from a developer clone; `updater_script()` = the PowerShell that waits for the app to exit, runs the official install.ps1 (downloaded) against the install folder with -Yes -NoShortcut, logs to `update.log`, and starts OmniBots again; `start_update()` starts it detached. `ui/about.py`: "Update now" shows only for an installer copy when GitHub is newer (a clone keeps the git pull hint). `app.py` `update_app`: asks if bots are working, backs up (A16.c), starts the updater, quits.
+  - Found by the real-PowerShell test and fixed: `*>> $log` appended UTF-16 to the UTF-8 log in Windows PowerShell 5 (an unreadable update.log exactly when an update fails); `Start-Process -ArgumentList` joins a list with bare spaces (a path with a space would break), now one quoted command line.
+  - Tests: `tests/test_updater.py` (3: the layout; the About button only when it can update; the real updater waiting for a real process, fetching a stand-in installer from a local server, the arguments it got, the log, the relaunch).
+- 2026-09-28 Claude: PASSED A16.e.01 (A16.e.99 live comes with A14)
+  - `runtime/agent.py` `_omi_review`: before a token ask reaches the user, one short cheap-lane call (`runner.review_chain`, the engine sets CHEAP_FIRST) reads the bot's last steps (tools called, what came back) and the estimate: "no" → Omi turns it down itself (the bot stops and reports; a line on the board); "fair" → the card carries "Omi's view: …". Omi can't approve; a failed review lets the ask through without an opinion.
+  - Tests: `tests/test_token_allocations.py` +2 (a looping bot turned down, no card; a fair ask with Omi's view on the card).
+
 **A16.b Notes:**
 - 2026-09-27 Claude: A16.b.01–03 PASSED (A16.b.99 needs a real goal: rate it 👎 with a note, then run the same kind of goal again)
   - Files: `db/migrations/006_verdicts.sql` (`verdicts`: project, claim or NULL for the goal, bot, its provider, playbook, ±1, note), `orchestrator/verdicts.py` (`rate`, `card_data`, `recent_notes`, `stats`), `engine.py` (`rate`, `ui_verdict_card`, `verdict_stats`), `orchestrator/playbooks.py` (`retrospective(user_verdicts=)`: your verdicts go first in its prompt, and a successful run no longer skips learning when you said 👎), `orchestrator/goal.py` (passes the playbook's recent verdicts), `ui/widgets.py` (`VerdictCard`, `ChatView.add_verdict`), `ui/live.py` (when a goal's REPORT.md is written, Omi's chat asks "How did it go?" once per goal), `app.py` (`--send rate --id <project> --text "up|down[: note]"` or `"claim N up: …"`).
@@ -1134,11 +1146,11 @@ _(empty)_
 - **A16.c.99** ✅ **Acceptance:** delete the database file, Restore brings back the last backup and the bots with their memory; a 100k-message test board shrinks after retention and the app starts as fast as before.
 
 #### A16.d — Update from inside the app
-- **A16.d.01** 🟡 **About → "Update now"** when GitHub has a newer version: runs the same `install.ps1` (fixed in A11.o.04) against the install folder, with a backup first (A16.c.02). If a goal is running, asks first (stop now / after the goal / cancel). Then restarts the app. For a git clone that isn't an installer folder, it says to `git pull` instead.
+- **A16.d.01** ✅ **About → "Update now"** when GitHub has a newer version: runs the same `install.ps1` (fixed in A11.o.04) against the install folder, with a backup first (A16.c.02). If a goal is running, asks first (stop now / after the goal / cancel). Then restarts the app. For a git clone that isn't an installer folder, it says to `git pull` instead.
 - **A16.d.99** ⏳ **Acceptance:** an install at version N updates to N+1 from the About window and comes back with its bots, memory and settings.
 
 #### A16.e — Omi reviews the token asks
-- **A16.e.01** 🟡 **Omi sees the ask before you do** (A9.c.03 today raises Omi's card with the bot's own estimate, and Omi's model doesn't look). One short Omi turn (cheap lane, capped) reads the bot's recent steps and the board, then either forwards it with a one-line opinion ("fair: one page left" / "it has repeated the same failing test 4 times; I'd say no") shown on the card, or declines itself and tells the bot to stop and report. Omi can't approve on its own: only you allocate.
+- **A16.e.01** ✅ **Omi sees the ask before you do** (A9.c.03 today raises Omi's card with the bot's own estimate, and Omi's model doesn't look). One short Omi turn (cheap lane, capped) reads the bot's recent steps and the board, then either forwards it with a one-line opinion ("fair: one page left" / "it has repeated the same failing test 4 times; I'd say no") shown on the card, or declines itself and tells the bot to stop and report. Omi can't approve on its own: only you allocate.
 - **A16.e.99** ⏳ **Acceptance:** a looping bot's ask arrives with Omi's "I'd say no" and the reason; a healthy one with "fair".
 
 **Notes:**
