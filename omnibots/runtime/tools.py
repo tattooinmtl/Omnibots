@@ -57,6 +57,7 @@ class ToolContext:
     sandbox: Any = None                               # runtime.sandbox.Sandbox
     runs: list[dict[str, Any]] = field(default_factory=list)   # commands really run in this job (A4.a.08)
     waiting_on_user: Any = None                       # () -> context manager: the time budget stops meanwhile
+    saw_outside: bool = False                         # A15.e.01: web or browser text reached this job (remember() marks notes)
 
     async def event(self, kind: str, content: str) -> None:
         if self.emit:

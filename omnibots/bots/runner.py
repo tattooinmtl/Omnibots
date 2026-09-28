@@ -37,7 +37,7 @@ from omnibots.runtime.tools import Tool, ToolContext, ToolRegistry
 
 log = logging.getLogger(__name__)
 
-BOSS_PROMPT = """You are Omi, the boss of the OmniBots team. You coordinate; you don't do the work yourself.
+BOSS_PROMPT = """You are Omi, the boss of the OmniBots team. You own the outcome: you coordinate, and you do small jobs yourself.
 Your job: MONITOR the work, INQUIRE the right bot, RELAY what it needs (CORAL hub). Workers can only talk to you.
 
 How you run a goal:
@@ -57,7 +57,9 @@ How you run a goal:
 7. When every job is accepted, review_work on the project. If it needs fixes, add_job a follow-up and assign it.
    Then submit a short final result. Submitting does not end the project: you and the workers keep reading the
    board, and a change in the project folder wakes a maintenance check. Keep the result working.
-Never do the workers' jobs yourself. Keep messages short and concrete. Ask the user only when a decision is truly theirs."""
+Do a job yourself only when it's small (a few steps, one or two files) or a worker is stuck on it: assign_job it to
+yourself (bot_id "omi"), do it with your tools, then complete_own_job with evidence (it's checked like anyone's claim).
+Otherwise delegate: a specialist owns its job. Keep messages short and concrete. Ask the user only when a decision is truly theirs."""
 
 LESSON_PROMPT = """You extract lessons from a finished job for the bot's memory.
 Reply with 0 to 3 short, concrete, reusable lessons as '- ' bullets (things to do or avoid next time).
@@ -95,6 +97,21 @@ class JobOutcome:
 def _job_status(turn_status: str) -> str:
     return {"done": "completed", "max_iterations": "blocked", "exhausted": "blocked", "budget": "blocked",
             "error": "failed", "cancelled": "cancelled", "stuck": "blocked"}.get(turn_status, "failed")
+
+
+def remember_tool(prof: BotProfile) -> Tool:
+    """A15.e.01: keep a note in your memory.md (Long-Term Notes). It's in your prompt on every later job."""
+    async def remember(args: dict[str, Any], ctx: ToolContext) -> str:
+        source = str(args.get("source") or "self").strip()
+        from_outside = ctx.saw_outside or source.lower() not in ("self", "user", "the user", "me")
+        line = prof.memory.remember(str(args.get("note") or ""), source=source, job_id=ctx.job_id, untrusted=from_outside)
+        if not line:
+            return "ERROR: remember needs a note"
+        return "kept in your memory" + (" (marked UNTRUSTED: this job read web or file text)" if from_outside else "")
+    return Tool("remember", "Keep a short note for your future jobs (a decision, a fact to reuse, what to watch). `source`: "
+                "'self' (your own conclusion), 'user' (the user told you), or the URL/file it came from. Keep it short.",
+                {"type": "object", "properties": {"note": {"type": "string"}, "source": {"type": "string"}}, "required": ["note"]},
+                "R0", remember, path_arg=None, summary=lambda a: f"remember: {str(a.get('note', ''))[:60]}")
 
 
 def provider_chain(prof: BotProfile) -> list[str]:
@@ -224,6 +241,7 @@ class JobRunner:
                 reg.add(t)
         if self.ledger and not prof.is_boss:
             reg.add(claim_tool(self.ledger, project_id=project_id))
+        reg.add(remember_tool(prof))                                         # A15.e.01
         if prof.is_boss:
             reg.add(self._user_profile_tool())
         return reg

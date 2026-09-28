@@ -20,6 +20,8 @@ from omnibots.lineup import MINIMAX_FIRST
 from omnibots.runtime.tools import RISK_ORDER
 
 BOSS_ID = "omi"
+# A15.e.03: Omi reads, and does small jobs itself (a named list, not every tool: A8.b.03).
+BOSS_TOOLS = ["read_file", "list_dir", "write_file", "run_python", "grep", "find_files"]
 DEFAULT_TOOLS = ["read_file", "write_file", "list_dir", "run_python", "grep", "find_files", "find_skill", "invoke_skill", "ask_help"]
 USER_PROFILE_TEMPLATE = """# User Profile
 
@@ -119,9 +121,12 @@ class BotRegistry:
     async def ensure_boss(self) -> BotProfile:
         existing = await self.get(BOSS_ID)
         if existing:
+            missing = [t for t in BOSS_TOOLS if t not in existing.tools]
+            if missing:                                   # A15.e.03: an older Omi gets the small-job tools too
+                return await self.update(BOSS_ID, tools=existing.tools + missing)
             return existing
         return await self.create("Omi", "boss", description="The boss: plans, relays work to the team, checks the evidence, reports to the user.",
-                                 chain=list(MINIMAX_FIRST), tools=["read_file", "list_dir"], risk_ceiling="R3", bot_id=BOSS_ID)
+                                 chain=list(MINIMAX_FIRST), tools=list(BOSS_TOOLS), risk_ceiling="R3", bot_id=BOSS_ID)
 
     async def get(self, bot_id: str) -> BotProfile | None:
         r = await self.db.read_one("SELECT * FROM bots WHERE id=?", (bot_id,))

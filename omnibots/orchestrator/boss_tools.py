@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from omnibots.board.a2a import Inbox
+from omnibots.board.ledger import EvidenceError
 from omnibots.board.types import COUNCIL, topic_job, topic_project
 from omnibots.bots.profile import BOSS_ID
 from omnibots.lineup import MINIMAX_FIRST
@@ -218,9 +219,18 @@ class BossToolkit:
         bot_id = str(args.get("bot_id") or "")
         if not job or job.project_id != self.c.project_id:
             return "ERROR: no such job in this project (see list_jobs)"
+        if bot_id == BOSS_ID:                              # A15.e.03: a small job Omi does itself
+            await self.graph.refresh(self.c.project_id)
+            job = await self.graph.get(job.id)
+            if job.status not in ("ready", "assigned"):
+                return f"ERROR: job {job.id} is {job.status}; only a ready job can be taken"
+            await self.graph.assign(job.id, BOSS_ID)
+            await self.db.write("UPDATE jobs SET status='running', started_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (job.id,))
+            return (f"{job.id} is yours: do it now with your tools (done when: {job.done_criteria or 'see the job'}), "
+                    f"then complete_own_job(job_id='{job.id}', text, evidence).")
         bot = await self.registry.get(bot_id)
-        if not bot or bot.status == "archived" or bot_id == BOSS_ID:
-            return "ERROR: no such worker (see list_team; you don't work jobs yourself)"
+        if not bot or bot.status == "archived":
+            return "ERROR: no such worker (see list_team)"
         if bot_id in self.runner.active:
             return f"ERROR: {bot_id} is busy; pick an idle bot or create one"
         await self.graph.refresh(self.c.project_id)
@@ -305,6 +315,30 @@ class BossToolkit:
         return (f"claim #{cid} accepted." + (f" Tests re-run: {'; '.join(notes)}." if notes else "")
                 + (f" Live at {live} (kept on the project)." if live else "")
                 + (f" Now ready: {', '.join(f'{j.id} ({j.title})' for j in ready)}" if ready else ""))
+
+    async def complete_own_job(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        """A15.e.03: Omi finishes a job it took. Its evidence gets the same checks as a worker's claim
+        (files exist, commands really ran, pages opened, tests re-run); nothing is accepted on its word."""
+        job = await self.graph.get(str(args.get("job_id") or ""))
+        if not job or job.project_id != self.c.project_id or job.assigned_bot_id != BOSS_ID:
+            return "ERROR: that isn't a job you took (assign_job it to omi first)"
+        try:
+            cid = await self.ledger.submit(bot_id=BOSS_ID, text=str(args.get("text") or ""), evidence=list(args.get("evidence") or []),
+                                           job_id=job.id, project_id=self.c.project_id, workspace=self.c.folder, runs=ctx.runs)
+        except EvidenceError as exc:
+            return f"ERROR: not recorded: {exc}"
+        notes, failure = await self._rerun_tests(cid)
+        if failure:
+            await self.ledger.decide(cid, False, f"re-run: {failure[:600]}", BOSS_ID)
+            await self.graph._set(await self.graph.get(job.id), "ready", error="Omi's own test failed on re-run")
+            return f"NOT done: {failure}\nThe job is ready again: fix it and complete_own_job again, or assign it to a worker."
+        await self.ledger.decide(cid, True, "Omi's own job; evidence checked", BOSS_ID)
+        await self.graph._set(await self.graph.get(job.id), "completed")
+        await self.graph.record_outcome(job.id, "completed")
+        live = await self._keep_live_url(cid)
+        ready = await self.graph.ready(self.c.project_id)
+        return (f"{job.id} done (claim #{cid}, checked)." + (f" Tests re-run: {'; '.join(notes)}." if notes else "")
+                + (f" Live at {live}." if live else "") + (f" Now ready: {', '.join(j.id for j in ready)}" if ready else ""))
 
     async def reject_claim(self, args: dict[str, Any], ctx: ToolContext) -> str:
         cid = int(args.get("claim_id") or 0)
@@ -404,6 +438,10 @@ class BossToolkit:
               self.create_bot, ["name", "role", "tools"]),
             T("assign_job", "Start an idle worker on a ready job. Optional extra instructions.",
               {"job_id": s, "bot_id": s, "instructions": s}, self.assign_job, ["job_id", "bot_id"]),
+            T("complete_own_job", "Finish a small job you took yourself (assign_job to omi): your evidence is checked like a worker's claim.",
+              {"job_id": s, "text": s, "evidence": {"type": "array", "items": {"type": "object", "properties": {
+                  "kind": s, "ref": s, "exit_code": {"type": "integer"}, "quote": s, "live": {"type": "boolean"}}, "required": ["kind", "ref"]}}},
+              self.complete_own_job, req=("job_id", "text", "evidence")),
             T("accept_claim", "Accept a claim whose evidence proves the job's done-criteria. The job becomes done and its dependents unlock.",
               {"claim_id": {"type": "integer"}, "reason": s}, self.accept_claim, ["claim_id"], timeout=400),
             T("reject_claim", "Reject a claim (partial, off-target, or measuring the wrong thing): say why and what to do instead; optionally give it to another bot.",
