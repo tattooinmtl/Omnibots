@@ -106,6 +106,10 @@ Say "Installing dependencies (this takes a minute the first time)"
 & $vpy -m pip install --quiet --upgrade pip
 & $vpy -m pip install --quiet -r (Join-Path $InstallDir "requirements.lock")
 if ($LASTEXITCODE -ne 0) { Fail "Installing the dependencies failed (see the messages above)." }
+# OmniBots itself (editable: it runs the cloned code, so a git pull updates it),
+# so "python -m omnibots" works from any folder
+& $vpy -m pip install --quiet --no-deps -e $InstallDir
+if ($LASTEXITCODE -ne 0) { Fail "Installing OmniBots failed (see the messages above)." }
 
 # 4. the browser the bots use
 if (-not $NoBrowser) {

@@ -12,6 +12,7 @@ node on the hub too: user messages to a bot arrive in the same inbox.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from omnibots.board.bus import MessageBus, Subscription
@@ -56,14 +57,17 @@ def a2a_tools(bus: MessageBus, inbox: Inbox, *, bot_id: str, boss_id: str, proje
         await bus.publish(topic_bot(to), "A2A_MESSAGE", {"text": text}, sender_type="bot", sender_id=bot_id,
                           recipient_id=to, job_id=ctx.job_id, project_id=project_id)
         if is_active is not None and to != boss_id and not is_active(to):
-            return (f"sent to {to}, BUT {to} is not working on anything right now, so nobody is reading it and no reply will come. "
-                    "To get more work done, create a follow-up job (add_job) and assign_job it.")
+            return (f"sent to {to}. {to} is not inside a job right now; they keep reading the board and will see this. "
+                    "assign_job still starts them on a ready job immediately.")
         return f"sent to {to}"
 
     async def wait_for_mention(args: dict[str, Any], ctx: ToolContext) -> str:
-        timeout = min(float(args.get("timeout_seconds") or 120), 1800)
+        # No 30-minute ceiling. Time spent here does not spend the goal's work budget.
+        timeout = float(args.get("timeout_seconds") or 120)
         await ctx.event("state", "sleeping: waiting for a message")
-        first = await inbox.sub.get(timeout=timeout)
+        hold = ctx.waiting_on_user() if ctx.waiting_on_user else contextlib.nullcontext()
+        with hold:
+            first = await inbox.sub.get(timeout=timeout)
         if first is None:
             return f"no messages arrived (waited {timeout:.0f}s)"
         got = [first, *inbox.sub.drain()]
@@ -86,7 +90,7 @@ def a2a_tools(bus: MessageBus, inbox: Inbox, *, bot_id: str, boss_id: str, proje
         Tool("wait_for_mention",
              "Wait (without busy-looping) until a message addressed to you arrives, then return it.",
              {"type": "object", "properties": {"timeout_seconds": {"type": "integer"}}},
-             "R0", wait_for_mention, timeout=1900, path_arg=None, summary=lambda a: "wait_for_mention"),
+             "R0", wait_for_mention, timeout=7 * 24 * 3600, path_arg=None, summary=lambda a: "wait_for_mention"),
     ]
     if is_boss:
         tools.append(Tool("submit", "Boss only: submit the final result for the user's goal.",

@@ -12,6 +12,13 @@ dist/
 .omnibots/
 .omnibots-test*/
 
+# API keys and secrets dropped in the repo folder by hand
+*apikey*
+*api_key*
+*.key
+.env
+.env.*
+
 # local tooling (preview server config)
 .claude/
 

@@ -39,9 +39,12 @@ max_bots = 12
 max_spawn_per_goal = 5
 max_spawn_per_minute = 3
 require_approval_for_new_bots = false
-# Time budget for one goal, and when a silent bot counts as stalled.
+# Time budget for one boss WORK turn (thinking and tools). Listening is not part of it:
+# wait_for_mention does not spend this budget, and the standing listen loop has no time limit.
 goal_minutes = 30
 stall_minutes = 5
+# How often each bot reads the board and Omi checks project folders for changes.
+listen_seconds = 5
 
 [skills]
 # Extra skill libraries the bots can use (on top of Omni's skills and ~/.omnibots/skills).

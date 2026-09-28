@@ -237,6 +237,12 @@ class Engine:
         self.team = TeamController(db=self.db, bus=self.bus, runner=self.runner, graph=self.graph, orchestrator=self.orchestrator,
                                    approvals=self.approvals, seats=self.seats, stall_after=float(o.get("stall_minutes", 5)) * 60)
         self.spawn(self.team.monitor(), name="stall-monitor")
+        from omnibots.bots.presence import TeamPresence
+        self.presence = TeamPresence(db=self.db, bus=self.bus, registry=self.registry, runner=self.runner,
+                                     graph=self.graph, projects=self.projects, orchestrator=self.orchestrator,
+                                     poll_seconds=float(o.get("listen_seconds", 5)),
+                                     paused=lambda: bool(self.team and self.team.paused))
+        self.spawn(self.presence.run(), name="presence")
         self.spawn(self._forward_board(), name="board-to-ui")
         self.accepting = True
         self._stage("Ready", 1.0)
