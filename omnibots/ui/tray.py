@@ -243,7 +243,9 @@ class Tray(QObject):
                           lambda _=False, a=a: self.review(a))
         else:
             self._act(m, "Open approvals inbox (0)", enabled=False)
-        for text, item in (("Open projects", "A11.a.01"), ("Open ledger and council", "A11.a.01"), ("Open logs and audit", "A11.a.01")):
+        self._act(m, "Open projects…", self.open_projects, tip="Every project: the dial, live address, tokens, your verdict; Close")
+        self._act(m, "Usage & health…", self.open_usage, tip="Tokens per day, provider, bot and project; bot health and bottlenecks")
+        for text, item in (("Open ledger and council", "A11.a.01"), ("Open logs and audit", "A11.a.01")):
             self._act(m, text, tip=SOON.format(item))
 
         m.addSeparator()                                        # ── settings and configuration
@@ -289,6 +291,14 @@ class Tray(QObject):
                 a.setChecked(p["autonomy"] == level)
                 a.setToolTip(tips[level])
                 a.triggered.connect(lambda _=False, pid=p["id"], lv=level: self.set_autonomy(pid, lv))
+
+    def open_projects(self) -> None:
+        from omnibots.ui.projects_window import open_projects
+        self._projects_win = open_projects(self.engine)
+
+    def open_usage(self) -> None:
+        from omnibots.ui.usage_window import open_usage
+        self._usage_win = open_usage(self.engine)
 
     def open_allocations(self) -> None:
         from omnibots.ui.allocations import open_allocations

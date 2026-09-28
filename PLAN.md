@@ -836,6 +836,7 @@ At a glance, the user can see who's stuck.
   - **When the bot is idle**, the same box starts a new request through the boss.
   - Typical use: the user sees the bot making a mistake and corrects it on the spot ("wrong file, use data/clean.csv").
 - **A11.c.02** ⏳ When a model doesn't expose its thinking, the Thinking panel says so instead of staying blank
+- **A11.a.03** ✅ (split from A11.a.01 on 2026-09-27 by Claude: the full sidebar window is large; the Projects panel comes first as its own window from the tray, and moves into the sidebar when A11.a.01 is built) **Projects window**: each project's goal, status, autonomy dial (Off/Watch/Fix), live address, jobs, tokens today and in total, your verdict; Open folder; Close project (A15.f.02's first part).
 - **A11.a.02** ⏳ **Theme and shell per `LayoutPlan.png`**: a frameless window with a custom title bar and menu, a dark navy glass palette, rounded glowing panels, and a resizable 3-column splitter (the layout is saved per user). The app name is **OmniBots** everywhere.
 - **A11.d.02** 🟡 **Omi face system, ported and upgraded (every bot is an Omi clone)**: port Omni's Buddy face (`~/.omni/buddy/src/*.js`): **17 states** (idle, thinking, coding, reading, exploring, browsing, contemplating, angry, tired, frustrated, happy, dizzy, writing, counseling, counting, creating, deleting), the traits (10 eye shapes, 12 mouths, 7 brows), the accessories (glasses, lightbulb, Z's, sweat drop, anger vein, compass, heart, pen, sparkles, X marks, code symbols, keyboard) and the 5 palettes. Draw them in `QPainter` with modern graphics: antialiasing, gradients, glow, a glossy visor screen inside a glowing ring (the LayoutPlan look), smooth easing between expressions, blinks and bobbing. **Each OmniBots state maps to an Omi state**: thinking→thinking, running a tool→coding/reading/browsing, rate-limited→tired, claim rejected→frustrated, council disagreement→contemplating, claim accepted→happy, error→dizzy, waiting for a seat→tired/Z's. **Redirected by the user (2026-09-26): "the Buddy system of face is just a demo, I need better graphics… a cute robot face, cartoonish."** So Omi is no longer a Buddy port: `ui/omi_face.py` draws a NEW cute cartoon robot in QPainter (round white head with a navy cartoon outline and gloss, a dark screen face, big glossy eyes with sparkles, blush, a glowing antenna bulb and ear pods in the role color). 11 moods so far (happy, joy, working, thinking, surprised, sleepy, sad, wink, love, paused, error), plus `blink`, `look` and `t` (antenna bob, glow pulse) for animation; readable down to 16 px. Omni's Buddy states remain the reference for which situations need a face. Remaining: easing between moods, the live animation loop, the full state mapping.
 - **A11.d.03** 🟡 **1980s cartoon thought bubble**: a cloud with a wobbly outline and three trailing puffs back to the head. It pops in with squash-and-stretch, bobs gently, and pops out. Contents: the 4-symbol **grawlix** cycle while thinking (`@#%$` → `@$#%` → `^%&$` → `$%#%`), **taunts**, Omi's funny "-ising" status words, and icons (💡 idea, ? question, ! alert, Z's sleep, ♥ counseling). Shown on the ID card (big) and next to mini faces in the team strip (small). Static bubble done: `ui/bubble.py` (bumpy cloud, navy ink, drop shadow, three trailing puffs to the head, red grawlix on grumbles, Comic Sans). Remaining: pop-in squash-and-stretch, bob, pop-out, the grawlix cycle animation, icons.
@@ -961,12 +962,16 @@ _(empty)_
 
 ### A13 — Observability & cost
 
-- **A13.a.01** ⏳ Cost and tokens per bot, provider, project and day; charts from `provider_usage_events`
-- **A13.a.02** ⏳ Bot health (error rate, average completion time, stalls) and bottleneck detection
+- **A13.a.01** ✅ Cost and tokens per bot, provider, project and day; charts from `provider_usage_events`
+- **A13.a.02** ✅ Bot health (error rate, average completion time, stalls) and bottleneck detection
 - **A13.99** ⏳ **Acceptance:** the numbers match a manual count for one A14 run.
 
 **Notes:**
-_(empty)_
+- 2026-09-27 Claude: PASSED A13.a.01, A13.a.02 (A13.99 waits for a real A14 run to compare against a manual count)
+  - Files: `omnibots/stats.py` (new: `usage` per day / provider / bot / project from `provider_usage_events` + `usage_daily`, with 429s and errors; `health` per bot: jobs done / failed / interrupted, average job time, failure rate, stalls counted from the stall monitor's "has been silent" notes, and bottlenecks in plain words: 429s per provider, MiniMax seat waits, silent bots, bots failing half their jobs; `projects`), `engine.py` (`ui_stats` with names, project goals and the 👍 share from A16.b), `ui/usage_window.py` (new: three totals, a bar per day with a tooltip, tables per provider / bot / project, health, "what slows the team down"), `ui/tray.py` ("Usage & health…").
+  - No dollars: providers don't report prices; the plan budgets tokens.
+  - Tests: `tests/test_stats.py` (real rows including old days rolled into usage_daily; both windows rendered through a fake engine); full suite 464 passed, 26 skipped.
+- 2026-09-27 Claude: A11.a.03 Projects window (split from A11.a.01): `ui/projects_window.py`, tray "Open projects…" (was "Not built yet"), `engine.close_project` (refused while jobs run; sets `cancelled`; audit row). Close stops the file watch (it skips cancelled projects) and every leash check; it doesn't stop routines yet because routines aren't tied to projects (A15.f.02/f.03).
 
 ### A15 — Life on a leash: bots that keep working, and you can see and stop it (re-plan 2026-09-27)
 
@@ -1026,7 +1031,7 @@ _(empty)_
 
 #### A15.f — Watching the result (Grok F7 + F10)
 - **A15.f.01** ⏳ **Health check on the live URL** (A15.c.03) on a schedule while the project is open. On failure: Watch → a report on the board and a tray note; Fix → a repair job (origin `routine`).
-- **A15.f.02** ⏳ **Close project** (tray, the project list, and a boss tool) sets `cancelled`, stops its routines and triggers. It's the only thing that ends the watching.
+- **A15.f.02** 🟡 **Close project** (tray, the project list, and a boss tool) sets `cancelled`, stops its routines and triggers. It's the only thing that ends the watching.
 - **A15.f.03** ⏳ **Boss tools `add_routine`, `add_trigger`, `enqueue_night`**, and the night queue moves to SQL (today it's in memory and only tests fill it).
 - **A15.f.04** ⏳ **A bot's VPS computer stays up** while its project is open, on Fix, and within budget; otherwise the 15-minute idle stop applies.
 
