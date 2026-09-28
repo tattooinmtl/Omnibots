@@ -141,6 +141,7 @@ def test_five_task_dag_runs_in_order_across_two_bots_and_escalates_a_failure(tmp
         with MockProviders() as mock:
             step = sse("", tool_calls=[call("write_file", path="PLACEHOLDER", content="x")])
             mock.default["good"] = sse("done")
+            mock.default["good"]["hold"] = 0.3        # each job takes a moment, so A and B really overlap on a busy PC
             mock.default["broken"] = status(400, {"error": {"message": "this bot always fails"}})
             e = await env(tmp_path, mock)
             g = e["graph"]

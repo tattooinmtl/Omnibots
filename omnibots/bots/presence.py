@@ -355,7 +355,7 @@ class TeamPresence:
         kit = BossToolkit(ctx=ctx, db=self.db, bus=self.bus, inbox=inbox, registry=self.registry, runner=self.runner,
                           graph=self.graph, projects=self.projects, ledger=self.orchestrator.ledger,
                           factory=self.orchestrator.factory, router=self.orchestrator.router, skills=skills or [],
-                          planner_chain=self.orchestrator.planner_chain, playbooks=self.orchestrator.playbooks)
+                          planner_chain=self.orchestrator.planner_chain, playbooks=self.orchestrator.playbooks, schedule=getattr(self.orchestrator, 'schedule', None))
         board = await query(self.db, project=pid, limit=12)
         board_text = "\n".join(f"- {m.message_type}: {m.text()[:180]}" for m in board[-12:]) or "(nothing yet)"
         fix = (await self.leash.level(pid) == "fix") if self.leash else True

@@ -48,6 +48,7 @@ class Orchestrator:
         self.keep_working = False
         self.max_rounds = 8                                # continuation rounds per project per day
         self.leash = None                                  # bots.leash.Leash, set by the engine
+        self.schedule = None                               # routines/triggers/night shift (A15.f.03), set by the engine
         self._rounds: dict[tuple[str, str], int] = {}
 
     async def run_goal(self, goal: str, *, project_id: str | None = None, resume: bool = False,
@@ -62,7 +63,7 @@ class Orchestrator:
         inbox = await Inbox.open(self.bus, BOSS_ID)
         kit = BossToolkit(ctx=ctx, db=self.db, bus=self.bus, inbox=inbox, registry=self.registry, runner=self.runner,
                           graph=self.graph, projects=self.projects, ledger=self.ledger, factory=self.factory,
-                          router=self.router, skills=self.skills(), planner_chain=self.planner_chain, playbooks=self.playbooks)
+                          router=self.router, skills=self.skills(), planner_chain=self.planner_chain, playbooks=self.playbooks, schedule=getattr(self, 'schedule', None))
         existing = [p.name for p in ctx.folder.iterdir() if p.name not in ("GOAL.md", ".git")] if ctx.folder.is_dir() else []
         here = (f"\n\nYou're working in an EXISTING folder ({ctx.folder}) that already has: {', '.join(sorted(existing)[:25])}. "
                 "This goal continues that work: look at those files first (list_dir / read_file) and build on them."

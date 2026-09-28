@@ -62,6 +62,8 @@ watch_settle_seconds = 180
 # PLAN.md A15.d: when a round of a goal runs out of time (goal_minutes) or results arrive between rounds,
 # Omi carries on in a new round by itself, at most this many per project per day (then it asks you).
 rounds_per_day = 8
+# PLAN.md A15.f.01: how often a project's live address is opened to check it still shows what proved it live.
+live_check_minutes = 30
 
 [skills]
 # Extra skill libraries the bots can use (on top of Omni's skills and ~/.omnibots/skills).

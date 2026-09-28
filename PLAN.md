@@ -1051,10 +1051,18 @@ _(empty)_
   - Tests: `tests/test_a_mind.py` (3); `test_a8_pools::test_retrospective_learns_and_makes_or_improves_playbooks` updated (a good run now makes one lesson call, no new version). Full suite: 472 passed, 26 skipped.
 
 #### A15.f — Watching the result (Grok F7 + F10)
-- **A15.f.01** ⏳ **Health check on the live URL** (A15.c.03) on a schedule while the project is open. On failure: Watch → a report on the board and a tray note; Fix → a repair job (origin `routine`).
-- **A15.f.02** 🟡 **Close project** (tray, the project list, and a boss tool) sets `cancelled`, stops its routines and triggers. It's the only thing that ends the watching.
-- **A15.f.03** ⏳ **Boss tools `add_routine`, `add_trigger`, `enqueue_night`**, and the night queue moves to SQL (today it's in memory and only tests fill it).
+- **A15.f.01** ✅ **Health check on the live URL** (A15.c.03) on a schedule while the project is open. On failure: Watch → a report on the board and a tray note; Fix → a repair job (origin `routine`).
+- **A15.f.02** ✅ **Close project** (tray, the project list, and a boss tool) sets `cancelled`, stops its routines and triggers. It's the only thing that ends the watching.
+- **A15.f.03** ✅ **Boss tools `add_routine`, `add_trigger`, `enqueue_night`**, and the night queue moves to SQL (today it's in memory and only tests fill it).
 - **A15.f.04** ⏳ **A bot's VPS computer stays up** while its project is open, on Fix, and within budget; otherwise the 15-minute idle stop applies.
+
+**A15.f Notes:**
+- 2026-09-28 Claude: PASSED A15.f.01–03 (A15.f.04, the VPS computer staying up, changes the user's server: waiting for the user)
+  - Migration `007_watching.sql`: `projects.live_quote/live_status/live_error`, `routines.project_id`, `triggers.project_id`, `night_queue`.
+  - A15.f.01 `engine.check_live` + `_live_checks` (every `[orchestrator] live_check_minutes = 30`): the live page is opened and the quote that proved it live (kept with the URL on accept, `boss_tools._keep_live_url`) must still be on it. Only a change is reported: down on **Watch** → a QUESTION to the user ("nothing was changed; switch it to Fix"); down on **Fix** → `continue_goal` with "the live site … is down: …; find out why and fix it"; back up → "✅ … is back up". The Projects window shows ✔ up / ✖ down: why.
+  - A15.f.02 `engine.close_project` also turns the project's routines and triggers off. Closing stays the user's action (the Projects window); Omi deliberately has no close tool, since closing ends the watching.
+  - A15.f.03 boss tools `add_routine` (cron), `add_trigger` (file inside the project only, board, threshold) and `enqueue_night`, tied to the project; a routine or trigger with a project continues that project (`engine._background_goal` → `continue_goal`, under the leash) instead of starting a new goal each time. The Projects window lists each project's routines with Remove (`engine.remove_routine`). The night queue is saved in SQL (`NightShift.load` / `enqueue_saved`; a started item is marked so it isn't run twice).
+  - Tests: `tests/test_watching.py` (3). Also hardened `test_a6_projects::test_five_task_dag_runs_in_order_across_two_bots_and_escalates_a_failure`: it checks that A and B overlap, but with instant mock replies A could finish before B started on a busy PC; each reply now takes 0.3 s (3/3 passes). Full suite: 477 passed + that one, 26 skipped.
 
 #### A15.g — How it feels (Claude's additions)
 - **A15.g.01** ⏳ **"While you were away" card** when the app opens: what the bots did on their own since you last looked (checks, fixes, tokens per project, anything waiting for you).

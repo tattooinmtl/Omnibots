@@ -17,6 +17,7 @@ import concurrent.futures
 import json
 import logging
 import threading
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, Awaitable, Coroutine
 
@@ -35,6 +36,8 @@ from omnibots.board.bus import MessageBus
 from omnibots.board.ledger import Ledger
 from omnibots.board.locks import LeaseManager
 from omnibots.board.types import APPROVALS, ORCHESTRATOR, topic_bot
+from omnibots.board.ledger import fetch_page
+from omnibots.board.types import topic_project
 from omnibots.bots.leash import CURRENT_ORIGIN, Leash
 from omnibots.bots.profile import BotRegistry
 from omnibots.bots.runner import JobRunner
@@ -225,6 +228,7 @@ class Engine:
         self.triggers = Triggers(self.db, self._background_goal, bus=self.bus,
                                  metrics={"minimax_used_pct": lambda: self.quota.snapshot().get(MINIMAX, {}).get("used_pct", 0.0)})
         self.night = NightShift(self._night_run, held=lambda: self.leash.paused)
+        await self.night.load(self.db)                                       # A15.f.03: the saved queue
         self.spawn(self.routines.loop(), name="routines")
         self.spawn(self.triggers.poll_loop(), name="triggers-poll")
         self.spawn(self.triggers.board_loop(), name="triggers-board")
@@ -242,6 +246,9 @@ class Engine:
         self.orchestrator.keep_working = True                                # A15.d: work outlives a round in the app
         self.orchestrator.max_rounds = int(o.get("rounds_per_day", 8))
         self.orchestrator.leash = self.leash
+        self.orchestrator.schedule = SimpleNamespace(routines=self.routines, triggers=self.triggers, night=self.night)
+        self.live_fetch = fetch_page
+        self.spawn(self._live_checks(float(o.get("live_check_minutes", 30))), name="live-checks")   # A15.f.01
         self.team = TeamController(db=self.db, bus=self.bus, runner=self.runner, graph=self.graph, orchestrator=self.orchestrator,
                                    approvals=self.approvals, seats=self.seats, stall_after=float(o.get("stall_minutes", 5)) * 60)
         self.spawn(self.team.monitor(), name="stall-monitor")
@@ -490,10 +497,14 @@ class Engine:
     async def _background_goal(self, goal: str, info: dict[str, Any] | None = None) -> str:
         """A routine or a trigger starts a goal, unless background work is paused (A15.b.02)."""
         origin = "routine" if (info or {}).get("routine") else "trigger"
-        if why := await self.leash.may_start(origin, None):
+        pid = (info or {}).get("project")
+        if why := await self.leash.may_start(origin, pid):
             await self.bus.publish(ORCHESTRATOR, "PROGRESS_UPDATE", {"text": f"Skipped the {origin} '{(info or {}).get('name', goal[:40])}': {why}."},
                                    sender_type="system")
             return ""
+        if pid:                                            # A15.f.03: a project's routine continues that project
+            out = await self.orchestrator.continue_goal(pid, f"{origin.capitalize()} '{(info or {}).get('name', '')}': {goal}")
+            return pid if out == "started" else ""
         return await self.start_goal(goal, info)
 
     # ── backup and housekeeping (A16.c) ────────────────────────────────────
@@ -546,7 +557,59 @@ class Engine:
         rows = await stats.projects(self.db)
         for r in rows:
             r["folder"] = str(self.projects.folder(r["id"]))
+            r["routines"] = [dict(x) for x in await self.db.read(
+                "SELECT id, name, schedule, enabled FROM routines WHERE project_id=? ORDER BY name", (r["id"],))]
         return rows
+
+    async def remove_routine(self, routine_id: str) -> str:
+        await self.db.write("DELETE FROM routines WHERE id=?", (routine_id,))
+        await self.db.audit("user", None, "routine_removed", json.dumps({"routine": routine_id}))
+        return "removed"
+
+    async def check_live(self, project_id: str) -> str:
+        """A15.f.01: open a project's live page; the quote that proved it live must still be there.
+        On a change: down on Watch → you're told; down on Fix → Omi gets a repair round; back up → said so."""
+        from omnibots.board.ledger import _norm, fetch_page
+        row = await self.db.read_one("SELECT goal, status, live_url, live_quote, live_status FROM projects WHERE id=?", (project_id,))
+        if not row or not row["live_url"] or row["status"] == "cancelled":
+            return "not watched"
+        try:
+            text = await asyncio.wait_for(self.live_fetch(row["live_url"]), 30)
+            error = None if not row["live_quote"] or _norm(row["live_quote"]) in _norm(text) else \
+                f"the page no longer shows \"{row['live_quote'][:80]}\""
+        except Exception as exc:
+            error = f"couldn't open it ({exc})"
+        status = "down" if error else "ok"
+        await self.db.write("UPDATE projects SET live_status=?, live_error=?, live_checked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+                            (status, error, project_id))
+        if status == row["live_status"]:
+            return status                                  # no change: nothing to say
+        url = row["live_url"]
+        if status == "ok":
+            if row["live_status"] == "down":
+                await self.bus.publish(topic_project(project_id), "PROGRESS_UPDATE", {"text": f"✅ {url} is back up."},
+                                       sender_type="bot", sender_id=BOSS_ID, project_id=project_id)
+            return status
+        if await self.leash.may_start("fix", project_id) is None:
+            out = await self.orchestrator.continue_goal(project_id, f"The live site {url} is down: {error}. Find out why and fix it; "
+                                                                    "open the page again before you finish.")
+            await self.bus.publish(topic_project(project_id), "PROGRESS_UPDATE", {"text": f"⚠ {url} is down ({error}). Repair round: {out}."},
+                                   sender_type="bot", sender_id=BOSS_ID, project_id=project_id)
+        else:
+            await self.bus.publish(topic_project(project_id), "QUESTION",
+                                   {"text": f"⚠ {url} is down ({error}). This project is on Watch, so nothing was changed. "
+                                            "Switch it to Fix (tray → Open projects) to let Omi repair it."},
+                                   sender_type="bot", sender_id=BOSS_ID, recipient_id="user", project_id=project_id)
+        return status
+
+    async def _live_checks(self, every_minutes: float) -> None:
+        while True:
+            await asyncio.sleep(every_minutes * 60)
+            for r in await self.db.read("SELECT id FROM projects WHERE live_url IS NOT NULL AND status != 'cancelled'"):
+                try:
+                    await self.check_live(r["id"])
+                except Exception:
+                    log.exception("live check of %s failed", r["id"])
 
     async def close_project(self, project_id: str) -> str:
         """A15.f.02 (first part): Close ends a project for good: Omi stops watching it and nothing
@@ -556,6 +619,8 @@ class Engine:
         if busy and busy["n"]:
             raise RuntimeError(f"{busy['n']} job(s) are still running or waiting in this project; stop them first")
         await self.projects.set_status(project_id, "cancelled")
+        await self.db.write("UPDATE routines SET enabled=0 WHERE project_id=?", (project_id,))     # A15.f.02: its routines stop
+        await self.db.write("UPDATE triggers SET enabled=0 WHERE project_id=?", (project_id,))
         await self.db.audit("user", None, "project_closed", json.dumps({"project": project_id}))
         return "closed"
 

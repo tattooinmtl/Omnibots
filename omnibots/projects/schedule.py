@@ -107,12 +107,13 @@ class Routines:
     def __init__(self, db, fire: Fire, *, clock: Callable[[], datetime] = datetime.now, sleep=asyncio.sleep):
         self.db, self.fire, self.clock, self.sleep = db, fire, clock, sleep
 
-    async def add(self, name: str, goal: str, schedule: str) -> str:
+    async def add(self, name: str, goal: str, schedule: str, *, project_id: str | None = None) -> str:
+        """`project_id` (A15.f.03): the routine continues that project instead of starting a new goal."""
         cron = Cron(schedule)                                  # validates
         rid = f"rt_{uuid.uuid4().hex[:8]}"
         nxt = cron.next_after(self.clock())
-        await self.db.write("INSERT INTO routines (id, name, goal, schedule, next_run_at) VALUES (?,?,?,?,?)",
-                            (rid, name, goal, cron.expr, nxt.isoformat(timespec="minutes")))
+        await self.db.write("INSERT INTO routines (id, name, goal, schedule, next_run_at, project_id) VALUES (?,?,?,?,?,?)",
+                            (rid, name, goal, cron.expr, nxt.isoformat(timespec="minutes"), project_id))
         return rid
 
     async def list(self) -> list[dict[str, Any]]:
@@ -133,7 +134,7 @@ class Routines:
             await self.db.write("UPDATE routines SET last_run_at=?, next_run_at=? WHERE id=?",
                                 (now.isoformat(timespec="minutes"), nxt.isoformat(timespec="minutes"), r["id"]))
             try:
-                await self.fire(r["goal"], {"routine": r["id"], "name": r["name"]})
+                await self.fire(r["goal"], {"routine": r["id"], "name": r["name"], "project": r["project_id"]})
                 fired.append(r["id"])
             except Exception:
                 log.exception("routine %s failed to start", r["id"])
@@ -165,7 +166,7 @@ class Triggers:
         self._last_fire: dict[str, float] = {}
         self.board_ready = asyncio.Event()          # set once board_loop listens (messages before that aren't seen)
 
-    async def add(self, name: str, kind: str, config: dict[str, Any], goal: str) -> str:
+    async def add(self, name: str, kind: str, config: dict[str, Any], goal: str, *, project_id: str | None = None) -> str:
         if kind not in self.KINDS:
             raise ValueError(f"trigger kind must be one of {sorted(self.KINDS)} (webhook/connector come with A10)")
         if kind == "file" and not config.get("path"):
@@ -175,8 +176,8 @@ class Triggers:
         if kind == "threshold" and (config.get("metric") not in self.metrics or "below" not in config and "above" not in config):
             raise ValueError(f"a threshold trigger needs a 'metric' from {sorted(self.metrics)} and 'below' or 'above'")
         tid = f"tg_{uuid.uuid4().hex[:8]}"
-        await self.db.write("INSERT INTO triggers (id, name, kind, config_json, goal) VALUES (?,?,?,?,?)",
-                            (tid, name, kind, json.dumps(config), goal))
+        await self.db.write("INSERT INTO triggers (id, name, kind, config_json, goal, project_id) VALUES (?,?,?,?,?,?)",
+                            (tid, name, kind, json.dumps(config), goal, project_id))
         return tid
 
     async def _all(self, kind: str) -> list[dict[str, Any]]:
@@ -189,7 +190,7 @@ class Triggers:
             return                                              # don't start the same goal over and over
         self._last_fire[t["id"]] = now
         await self.db.write("UPDATE triggers SET last_fired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (t["id"],))
-        await self.fire(t["goal"], {"trigger": t["id"], "name": t["name"], "detail": detail})
+        await self.fire(t["goal"], {"trigger": t["id"], "name": t["name"], "detail": detail, "project": t.get("project_id")})
 
     async def check_files_and_thresholds(self) -> None:
         for t in await self._all("file"):
@@ -259,6 +260,18 @@ class NightShift:
     def enqueue(self, goal: str, **info: Any) -> None:
         self.queue.append({"goal": goal, **info})
 
+    # A15.f.03: with a database the queue survives a restart
+    async def load(self, db) -> int:
+        self.db = db
+        rows = await db.read("SELECT id, goal, project_id FROM night_queue WHERE status='queued' ORDER BY id")
+        self.queue = [{"goal": r["goal"], "project": r["project_id"], "_row": r["id"]} for r in rows]
+        return len(self.queue)
+
+    async def enqueue_saved(self, goal: str, project_id: str | None = None) -> int:
+        row = await self.db.write("INSERT INTO night_queue (goal, project_id) VALUES (?, ?)", (goal, project_id))
+        self.queue.append({"goal": goal, "project": project_id, "_row": row})
+        return row
+
     @property
     def user_away(self) -> bool:
         return self.idle() >= self.idle_after
@@ -268,6 +281,8 @@ class NightShift:
         if self.running or not self.queue or not self.user_away or self.held():
             return False
         item = self.queue.pop(0)
+        if item.get("_row") and getattr(self, "db", None) is not None:
+            await self.db.write("UPDATE night_queue SET status='started' WHERE id=?", (item["_row"],))
         self.running = True
         try:
             await self.run(item)
