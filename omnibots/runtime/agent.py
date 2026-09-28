@@ -30,7 +30,8 @@ from omnibots.runtime.approvals import ALLOCATED, MORE_TOKENS, ApprovalCenter
 from omnibots.runtime.context import first_user_goal, maybe_auto_compact, steering_message, trim_old_tool_results
 from omnibots.runtime.events import BotEvents, ToolTextFilter
 from omnibots.runtime.sandbox import Sandbox
-from omnibots.runtime.tools import RISK_TEXT, ToolContext, ToolRegistry, args_digest, target_host
+from omnibots.runtime.scope import outside_paths
+from omnibots.runtime.tools import RISK_ORDER, RISK_TEXT, ToolContext, ToolRegistry, args_digest, target_host
 
 log = logging.getLogger(__name__)
 
@@ -404,7 +405,12 @@ class BotAgent:
                 allowed[idx] = None
                 continue
             risk = tool.risk_for(args, ctx)
-            if self.approvals.needs_approval(risk):
+            # A15.e.04 (user, 2026-09-28): leaving the project folder always asks, whatever `ask_from` says
+            outside = outside_paths(name, args, ctx.workspace)
+            if outside:
+                risk = risk if RISK_ORDER.index(risk) >= RISK_ORDER.index("R3") else "R3"
+                summary = f"leaves the project folder ({', '.join(outside[:3])}): {summary}"
+            if self.approvals.needs_approval(risk) or outside:
                 frozen = json.loads(json.dumps(args, default=str))          # A9.b.03: what is approved is what runs
                 digest = args_digest(frozen)
                 rehearsal: dict[str, Any] = {"args_sha256": digest}

@@ -28,5 +28,6 @@ def test_omi_runs_a_small_goal_end_to_end(tmp_path):
     assert datetime.now().strftime("%Y-%m-%d") in today and datetime.now().strftime("%A") in today
     text = report.read_text(encoding="utf-8")
     assert "## Jobs" in text and "| completed |" in text and "## Evidence (accepted claims)" in text
-    for kind in ("TASK_PLANNED", "TASK_ASSIGNED", "CLAIM_SUBMITTED", "CLAIM_ACCEPTED", "REVIEW_RESULT"):
+    # REVIEW_RESULT isn't required: Omi may skip review_work on a trivial goal (user, 2026-09-28, A15.a.07)
+    for kind in ("TASK_PLANNED", "TASK_ASSIGNED", "CLAIM_SUBMITTED", "CLAIM_ACCEPTED"):
         assert kind in r.stdout or kind in ("TASK_PLANNED",), kind

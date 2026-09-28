@@ -126,7 +126,9 @@ async def run_python(args: dict[str, Any], ctx: ToolContext) -> str:
         shown = _rel(ctx, script)
     timeout = min(float(args.get("timeout_seconds") or 60), 300)
     await ctx.event("terminal", f"$ python {shown}")
-    res = await ctx.sandbox.run([sys.executable, "-I", str(script)], cwd=run_dir, timeout=timeout, grant=[ctx.workspace],
+    # A15.e.04: the project folder is the working directory (relative paths like index.html work);
+    # the run folder holding inline code is granted too
+    res = await ctx.sandbox.run([sys.executable, "-I", str(script)], cwd=ctx.workspace, timeout=timeout, grant=[run_dir],
                                 on_output=lambda line: ctx.event("terminal", line))
     await ctx.event("terminal", f"[{'timed out' if res.timed_out else f'exit {res.exit_code}'} · {res.seconds:.1f}s]")
     ctx.record_run(f"python {shown}", res)
@@ -166,7 +168,7 @@ def core_registry() -> ToolRegistry:
         {"type": "object", "properties": {"path": {"type": "string"}}},
         "R0", list_dir, classify=_outside_is_r3, summary=lambda a: f"list {a.get('path', '.')}"))
     reg.add(Tool(
-        "run_python", "Run Python in an isolated sandbox folder and return its output. Give either `code` or the `path` of a .py file in your workspace. No network guarantees; no secrets are available.",
+        "run_python", "Run Python in the sandbox, with your project folder as the working directory (relative paths like index.html work), and return its output. Give either `code` or the `path` of a .py file in your workspace. Leaving the project folder asks the user. No network guarantees; no secrets are available.",
         {"type": "object", "properties": {"code": {"type": "string"}, "path": {"type": "string"}, "timeout_seconds": {"type": "integer"}}},
         "R1", run_python, timeout=320, path_arg=None,
         summary=lambda a: f"run_python {a.get('path') or '<code>'}"))

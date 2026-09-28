@@ -268,7 +268,7 @@ class BossToolkit:
                 continue
             if ran.startswith("python ") and (self.c.folder / ran[7:].strip()).is_file():
                 argv: list[str] | str = [sys.executable, "-I", str(self.c.folder / ran[7:].strip())]
-                res = await sandbox.run(argv, cwd=sandbox.new_run_dir(BOSS_ID), timeout=300, grant=[self.c.folder])
+                res = await sandbox.run(argv, cwd=self.c.folder, timeout=300, grant=[sandbox.new_run_dir(BOSS_ID)])
             else:
                 res = await sandbox.run(ran, cwd=self.c.folder, timeout=300)
             if res.timed_out or res.exit_code != 0:
