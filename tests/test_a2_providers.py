@@ -261,8 +261,10 @@ def test_all_exhausted_waits_for_a_seat_then_uses_minimax():
             quota = QuotaManager()
             router = Router(lambda: cfg, quota, seats, base_delay=0.01, max_wait=5)
             blocker = await seats.acquire("other")            # the only worker seat is busy
-            call = asyncio.create_task(router.chat("w", ["cheap_a/m", "minimax.io/m"], [{"role": "user", "content": "x"}]))
-            await asyncio.sleep(0.5)
+            waiting = asyncio.Event()
+            call = asyncio.create_task(router.chat("w", ["cheap_a/m", "minimax.io/m"], [{"role": "user", "content": "x"}],
+                                                   on_hop=lambda h: waiting.set() if h.get("outcome") == "waiting" else None))
+            await asyncio.wait_for(waiting.wait(), 10)        # the router is really waiting (not a guess at how long that takes)
             assert not call.done()                            # waiting, not failing
             seats.release(blocker)
             return await asyncio.wait_for(call, 5)

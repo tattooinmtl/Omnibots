@@ -35,12 +35,14 @@ from omnibots.board.bus import MessageBus
 from omnibots.board.ledger import Ledger
 from omnibots.board.locks import LeaseManager
 from omnibots.board.types import APPROVALS, ORCHESTRATOR, topic_bot
+from omnibots.bots.leash import CURRENT_ORIGIN, Leash
 from omnibots.bots.profile import BotRegistry
 from omnibots.bots.runner import JobRunner
 from omnibots.lineup import CHEAP_FIRST, MINIMAX
 from omnibots.orchestrator.forge import ToolForge
 from omnibots.orchestrator.playbooks import PlaybookStore
 from omnibots.runtime.pools import runner_pools
+from omnibots.runtime.approvals import ALLOCATED, MORE_TOKENS
 from omnibots.security.budget import Budget
 from omnibots.security.vault import Vault
 from omnibots.projects.graph import PlanRunner, TaskGraph
@@ -176,6 +178,7 @@ class Engine:
         await self._load_omni()
         self._stage("Cleaning up after the last session", 0.40)
         self.bus = MessageBus(self.db)
+        self.budget.bus = self.bus                               # A9.c.03: a bot's ask for tokens goes to Omi
         self.locks = LeaseManager(self.db, self.bus)
         await self.locks.clear_all()                       # leases never survive a restart
         await self._recover_orphans()                      # nor do running jobs (A6.c.01)
@@ -216,10 +219,11 @@ class Engine:
         self.playbooks = PlaybookStore(self.db, self.bus)                  # A8.c.01
         self.graph = TaskGraph(self.db, self.bus)
         self.plans = PlanRunner(self.graph, self.runner.run, workspace_for=self.projects.folder)
-        self.routines = Routines(self.db, self.start_goal)
-        self.triggers = Triggers(self.db, self.start_goal, bus=self.bus,
+        self.leash = await Leash(self.db).load()                           # A15.b: the dial and "Pause background work"
+        self.routines = Routines(self.db, self._background_goal)
+        self.triggers = Triggers(self.db, self._background_goal, bus=self.bus,
                                  metrics={"minimax_used_pct": lambda: self.quota.snapshot().get(MINIMAX, {}).get("used_pct", 0.0)})
-        self.night = NightShift(self._night_run)
+        self.night = NightShift(self._night_run, held=lambda: self.leash.paused)
         self.spawn(self.routines.loop(), name="routines")
         self.spawn(self.triggers.poll_loop(), name="triggers-poll")
         self.spawn(self.triggers.board_loop(), name="triggers-board")
@@ -241,7 +245,8 @@ class Engine:
         self.presence = TeamPresence(db=self.db, bus=self.bus, registry=self.registry, runner=self.runner,
                                      graph=self.graph, projects=self.projects, orchestrator=self.orchestrator,
                                      poll_seconds=float(o.get("listen_seconds", 5)),
-                                     paused=lambda: bool(self.team and self.team.paused))
+                                     settle_seconds=float(o.get("watch_settle_seconds", 180)),
+                                     paused=lambda: bool(self.team and self.team.paused), leash=self.leash)
         self.spawn(self.presence.run(), name="presence")
         self.spawn(self._forward_board(), name="board-to-ui")
         self.accepting = True
@@ -322,7 +327,12 @@ class Engine:
         info = info or {}
         pid = await self.projects.create(goal, created_by=info.get("created_by", "user"),
                                          folder=Path(info["folder"]) if info.get("folder") else None)
-        task = self.spawn(self.orchestrator.run_goal(goal, project_id=pid), name=f"goal-{pid}")
+        origin = "routine" if info.get("routine") else "trigger" if info.get("trigger") else "user"
+        token = CURRENT_ORIGIN.set(origin)                 # the goal's task copies it (A15.b.01)
+        try:
+            task = self.spawn(self.orchestrator.run_goal(goal, project_id=pid), name=f"goal-{pid}")
+        finally:
+            CURRENT_ORIGIN.reset(token)
         self.orchestrator.boss_tasks[pid] = task
         await self.db.audit("system", None, "goal_started", json.dumps({"project": pid, **{k: v for k, v in info.items() if k != "created_by"}}))
         return pid
@@ -412,7 +422,10 @@ class Engine:
             team = "idle"
         held = [s for s in self.seats.snapshot() if "seat" in s]
         fc = await self.quota.forecast() if self.quota else {}
+        projects = [{"id": r["id"], "goal": r["goal"], "autonomy": r["autonomy"]} for r in await self.db.read(
+            "SELECT id, goal, autonomy FROM projects WHERE status != 'cancelled' ORDER BY created_at DESC LIMIT 12")]
         return {"team": team, "running": running, "paused": self.team.paused, "interrupted": interrupted,
+                "background_paused": self.leash.paused, "projects": projects,
                 "bots": bots, "approvals": pending, "seats_used": sum(1 for s in held if s.get("holder")),
                 "seats_total": len(held), "tokens_left": fc.get("tokens_left")}
 
@@ -453,13 +466,62 @@ class Engine:
         """The user talks to a bot (answers Omi's ask_user, or instructs a worker)."""
         await self.bus.publish(topic_bot(bot_id), "A2A_MESSAGE", {"text": text}, sender_type="user", sender_id="user", recipient_id=bot_id)
 
+    async def _background_goal(self, goal: str, info: dict[str, Any] | None = None) -> str:
+        """A routine or a trigger starts a goal, unless background work is paused (A15.b.02)."""
+        origin = "routine" if (info or {}).get("routine") else "trigger"
+        if why := await self.leash.may_start(origin, None):
+            await self.bus.publish(ORCHESTRATOR, "PROGRESS_UPDATE", {"text": f"Skipped the {origin} '{(info or {}).get('name', goal[:40])}': {why}."},
+                                   sender_type="system")
+            return ""
+        return await self.start_goal(goal, info)
+
+    async def set_background_paused(self, on: bool) -> bool:
+        return await self.leash.set_paused(on)
+
+    async def set_autonomy(self, project_id: str, level: str) -> str:
+        return await self.leash.set_level(project_id, level)
+
+    # ── token allocations (A9.c.03) ────────────────────────────────────────
+    async def ui_allocations(self) -> dict[str, Any]:
+        """For the Token allocations window: every open project, the bots created in it (idle or
+        working) with today's background tokens used and allocated, and any ask waiting for you."""
+        asks = {(a["rehearsal"].get("project"), a["rehearsal"].get("bot")): a["id"]
+                for a in self.approvals.list_pending() if a.get("tool") == MORE_TOKENS and a.get("rehearsal")}
+        projects = []
+        for p in await self.db.read("SELECT id, goal, autonomy FROM projects WHERE status != 'cancelled' ORDER BY created_at DESC LIMIT 20"):
+            bots = []
+            for r in await self.db.read(
+                    "SELECT DISTINCT assigned_bot_id AS b FROM jobs WHERE project_id=? AND assigned_bot_id IS NOT NULL AND assigned_bot_id != ?",
+                    (p["id"], BOSS_ID)):
+                prof = await self.registry.get(r["b"])
+                if not prof or prof.status == "archived":
+                    continue
+                bots.append({"id": prof.id, "name": prof.name, "role": prof.role,
+                             "state": "working" if prof.id in self.runner.active else "idle",
+                             "used": await self.budget.background_used_today(p["id"], prof.id),
+                             "allocated": await self.budget.allocation_today(p["id"], prof.id),
+                             "asking": asks.get((p["id"], prof.id))})
+            projects.append({"id": p["id"], "goal": p["goal"], "autonomy": p["autonomy"], "bots": bots})
+        return {"per_bot": int(self.budget.limits["background_tokens_per_bot"]), "projects": projects}
+
+    async def allocate_tokens(self, project_id: str, bot_id: str, tokens: int) -> int:
+        """The user adds background tokens for one bot in one project, for today. A card the bot
+        is waiting on for that project is approved too (the bot goes on without adding again)."""
+        total = await self.budget.allocate(project_id, bot_id, tokens)
+        for a in self.approvals.list_pending():
+            r = a.get("rehearsal") or {}
+            if a.get("tool") == MORE_TOKENS and r.get("project") == project_id and r.get("bot") == bot_id:
+                await self.approvals.decide(a["id"], True, f"{ALLOCATED} {int(tokens):,} from the Token allocations window")
+        return total
+
     async def _night_run(self, item: dict[str, Any]) -> None:
         """Night shift: low-priority work on the cheap lane while the user is away."""
         bot = await self.registry.get("bot_nightshift") or await self.registry.create(
             "Night Shift", "night-shift worker", chain=list(CHEAP_FIRST), bot_id="bot_nightshift",
             description="Runs low-priority work on the cheap lane while the user is away.")
         pid = await self.projects.create(item["goal"], created_by="night-shift")
-        await self.runner.run(bot.id, item["goal"], project_id=pid, workspace=self.projects.folder(pid), chain=list(CHEAP_FIRST))
+        await self.runner.run(bot.id, item["goal"], project_id=pid, workspace=self.projects.folder(pid), chain=list(CHEAP_FIRST),
+                              origin="night")
 
     async def steer(self, bot_id: str, text: str) -> str:
         """The user's chat box on a working bot (A11.c.03). Normally a USER_STEER, which the bot's

@@ -45,6 +45,9 @@ goal_minutes = 30
 stall_minutes = 5
 # How often each bot reads the board and Omi checks project folders for changes.
 listen_seconds = 5
+# PLAN.md A15.b.03: a project folder must be quiet this long before Omi checks the changes
+# (one burst of edits = one check, yours included).
+watch_settle_seconds = 180
 
 [skills]
 # Extra skill libraries the bots can use (on top of Omni's skills and ~/.omnibots/skills).
@@ -61,6 +64,10 @@ ask_from = "R4"
 # PLAN.md A9.c.02. Token caps: 0 = no cap (providers' own quotas still apply).
 daily_tokens = 0
 bot_daily_tokens = 0
+# PLAN.md A9.c.03. Background work only (checks, repairs, routines, the night shift): each bot
+# gets this many tokens per project per day. Omi and work you start aren't limited. Not a wall:
+# a bot that runs out asks Omi, and Omi asks you (tray → Token allocations shows them all). 0 = no cap.
+background_tokens_per_bot = 200000
 # Money caps (USD) for R4 actions; every R4 action ALSO needs your click.
 money_per_task_usd = 2.0
 money_per_bot_day_usd = 5.0

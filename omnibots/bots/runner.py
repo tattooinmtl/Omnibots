@@ -24,6 +24,7 @@ from typing import Any, Callable
 from omnibots.board.a2a import Inbox, a2a_tools, steering_pump
 from omnibots.board.ledger import claim_tool
 from omnibots.board.types import topic_job
+from omnibots.bots.leash import CURRENT_ORIGIN, WHY, child_origin
 from omnibots.bots.profile import BOSS_ID, BotProfile, BotRegistry, user_profile_path, user_profile_text
 from omnibots.lineup import CHEAP_FIRST
 from omnibots.providers.router import Router
@@ -94,6 +95,15 @@ class JobOutcome:
 def _job_status(turn_status: str) -> str:
     return {"done": "completed", "max_iterations": "blocked", "exhausted": "blocked", "budget": "blocked",
             "error": "failed", "cancelled": "cancelled", "stuck": "blocked"}.get(turn_status, "failed")
+
+
+def provider_chain(prof: BotProfile) -> list[str]:
+    """A15.a.03: with multi_provider on (the default) a bot fails over across its whole chain; off, it
+    stays on its first provider's models and waits out a 429 instead of switching."""
+    if prof.multi_provider or not prof.chain:
+        return list(prof.chain)
+    first = prof.chain[0].split("/")[0].split("::")[0]
+    return [m for m in prof.chain if m.split("/")[0].split("::")[0] == first]
 
 
 class JobRunner:
@@ -267,24 +277,27 @@ class JobRunner:
     async def run(self, bot_id: str, task: str, *, title: str | None = None, job_id: str | None = None,
                   project_id: str | None = None, workspace: Path | None = None, chain: list[str] | None = None,
                   budget: dict[str, Any] | None = None, extra_tools: list[Tool] | None = None,
-                  max_iterations: int | None = None, inbox: Inbox | None = None) -> JobOutcome:
+                  max_iterations: int | None = None, inbox: Inbox | None = None, origin: str | None = None) -> JobOutcome:
         """Run one job. `job_id` may be an existing (graph) job: it's restarted as a new attempt.
         `workspace`: a shared project folder instead of the bot's own. `chain`: override the
-        profile's providers (the night shift uses the cheap lane). `budget`: {"tokens", "seconds"}."""
+        profile's providers (the night shift uses the cheap lane). `budget`: {"tokens", "seconds"}.
+        `origin` (A15.b): who started it; None = the job's stored origin, or inherited from the run that made it."""
         if bot_id in self.active or bot_id in self._starting:
             return JobOutcome(job_id or "", bot_id, "skipped", None, 0.0, [])
         self._starting.add(bot_id)
+        outer = CURRENT_ORIGIN.get()
         try:
             return await self._run_held(bot_id, task, title=title, job_id=job_id, project_id=project_id,
                                         workspace=workspace, chain=chain, budget=budget, extra_tools=extra_tools,
-                                        max_iterations=max_iterations, inbox=inbox)
+                                        max_iterations=max_iterations, inbox=inbox, origin=origin)
         finally:
+            CURRENT_ORIGIN.set(outer)                          # _run_held set this run's origin; the caller's comes back
             self._starting.discard(bot_id)
 
     async def _run_held(self, bot_id: str, task: str, *, title: str | None = None, job_id: str | None = None,
                         project_id: str | None = None, workspace: Path | None = None, chain: list[str] | None = None,
                         budget: dict[str, Any] | None = None, extra_tools: list[Tool] | None = None,
-                        max_iterations: int | None = None, inbox: Inbox | None = None) -> JobOutcome:
+                        max_iterations: int | None = None, inbox: Inbox | None = None, origin: str | None = None) -> JobOutcome:
         prof = await self.registry.get(bot_id)
         if not prof or prof.status == "archived":
             raise ValueError(f"no active bot {bot_id}")
@@ -293,29 +306,35 @@ class JobRunner:
         if project_id and not await self.db.read_one("SELECT id FROM projects WHERE id=?", (project_id,)):
             # A6 creates projects properly; until then a job may name one that doesn't exist yet.
             await self.db.write("INSERT INTO projects (id, goal, created_by) VALUES (?,?, 'user')", (project_id, title))
-        if await self.db.read_one("SELECT id FROM jobs WHERE id=?", (job_id,)):
+        if row := await self.db.read_one("SELECT origin FROM jobs WHERE id=?", (job_id,)):
+            origin = origin or row["origin"]
             await self.db.write(
                 "UPDATE jobs SET status='running', assigned_bot_id=?, attempts=attempts+1, error_message=NULL, finished_at=NULL, "
-                "started_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (bot_id, job_id))
+                "started_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), origin=? WHERE id=?", (bot_id, origin, job_id))
         else:
+            origin = origin or child_origin(CURRENT_ORIGIN.get())
             await self.db.write(
-                "INSERT INTO jobs (id, project_id, title, description, status, assigned_bot_id, created_by, attempts, started_at) "
-                "VALUES (?,?,?,?, 'running', ?, 'user', 1, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
-                (job_id, project_id, title, task, bot_id))
+                "INSERT INTO jobs (id, project_id, title, description, status, assigned_bot_id, created_by, attempts, started_at, origin) "
+                "VALUES (?,?,?,?, 'running', ?, 'user', 1, strftime('%Y-%m-%dT%H:%M:%fZ','now'), ?)",
+                (job_id, project_id, title, task, bot_id, origin))
+        CURRENT_ORIGIN.set(origin)                             # work this run creates inherits it (A15.b)
         budget = dict(budget or {})
         await self.registry.set_status(bot_id, "working")
         prof.memory.set_current_task(job_id, title)
         if self.bus:
-            await self.bus.publish(topic_job(job_id), "WORK_STARTED", {"title": title}, sender_type="bot", sender_id=bot_id,
+            await self.bus.publish(topic_job(job_id), "WORK_STARTED", {"title": title, "origin": origin, "why": WHY.get(origin, origin)},
+                                   sender_type="bot", sender_id=bot_id,
                                    job_id=job_id, project_id=project_id)
         own_inbox = inbox is None
         inbox = inbox or (await Inbox.open(self.bus, bot_id) if self.bus else None)
         tools = self.tools_for(prof, inbox, project_id)
         events = BotEvents(bot_id, self.db, listener=self._listen)
+        if origin != "user":
+            await events.emit("console", f"▶ started on its own: {WHY.get(origin, origin)}")
         for t in [*await self.mcp_tools_for(prof, events.emit), *(extra_tools or [])]:
             tools.add(t)
         agent = BotAgent(bot_id=bot_id, name=prof.name, role=prof.role, workspace=workspace or prof.workspace, router=self.router,
-                         chain=chain or prof.chain, tools=tools, approvals=self.approvals,
+                         chain=chain or provider_chain(prof), tools=tools, approvals=self.approvals,
                          events=events, sandbox=self.sandbox,
                          system_prompt=self.system_prompt(prof), max_iterations=max_iterations or int(prof.limits.get("max_iterations", 40)),
                          priority="boss" if prof.is_boss else "work", token_budget=budget.get("tokens"), budget=self.budget)

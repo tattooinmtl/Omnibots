@@ -163,6 +163,9 @@ def load(omni_root: Path | None) -> dict[str, Any]:
 
 
 def write_snapshot(omni_root: Path) -> Path:
+    """Maintenance, not called by the app: refresh the bundled fallback from Omni after Omni's
+    `src/ui.mjs` changes. Run: python -c "from pathlib import Path; from omnibots.omni.personality import
+    write_snapshot; print(write_snapshot(Path.home() / '.omni'))" (point it at Omni's install root)."""
     data = read_omni(Path(omni_root) / "src" / "ui.mjs")
     SNAPSHOT.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return SNAPSHOT

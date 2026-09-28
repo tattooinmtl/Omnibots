@@ -216,6 +216,7 @@ class Tray(QObject):
         self._act(m, "⏹  Stop  (Omi and all sub-agents)", self.stop, enabled=running or paused)
         self._act(m, "⟳  Restart Omi", self.restart, enabled=running or paused or interrupted > 0)
         self._act(m, "⛔  Panic stop", self.panic, tip="Denies every pending approval, then kills every job, sandbox and browser now")
+        self._leash_menu(m, s)
 
         m.addSeparator()                                        # ── bots, grouped by state
         by: dict[str, list[dict[str, Any]]] = {}
@@ -253,6 +254,44 @@ class Tray(QObject):
         m.addSeparator()
         self._act(m, "Reset…", tip=SOON.format("A12"))
         self._act(m, "Exit", self.quit_app)
+
+    def _leash_menu(self, m: QMenu, s: dict[str, Any]) -> None:
+        """A15.b.02: what the bots may start on their own. Work you start is never held back."""
+        bg = m.addAction("🔕  Pause background work  (all projects)")
+        bg.setCheckable(True)
+        bg.setChecked(bool(s.get("background_paused")))
+        bg.setToolTip("Holds everything the bots would start on their own: checks after file changes, repairs, "
+                      "routines, triggers, the night shift. Your own goals and chats still run.")
+        bg.toggled.connect(self.set_background_paused)
+        self._act(m, "🪙  Token allocations…", self.open_allocations,
+                  tip="Background tokens per bot in each project today; add more for a bot")
+        projects = s.get("projects", [])
+        if not projects:
+            return
+        sub = m.addMenu("Projects on their own")
+        sub.setToolTipsVisible(True)
+        tips = {"off": "Starts nothing on its own here", "watch": "Omi checks and reports; no fixes",
+                "fix": "Omi's checks may start repair jobs"}
+        for p in projects:
+            ps = sub.addMenu(f"{p['goal'][:48]}  —  {p['autonomy'].capitalize()}")
+            ps.setToolTipsVisible(True)
+            for level in ("off", "watch", "fix"):
+                a = ps.addAction(level.capitalize())
+                a.setCheckable(True)
+                a.setChecked(p["autonomy"] == level)
+                a.setToolTip(tips[level])
+                a.triggered.connect(lambda _=False, pid=p["id"], lv=level: self.set_autonomy(pid, lv))
+
+    def open_allocations(self) -> None:
+        from omnibots.ui.allocations import open_allocations
+        self._alloc_win = open_allocations(self.engine)
+
+    def set_background_paused(self, on: bool) -> None:
+        self._later(self.engine.set_background_paused(on), "Background work",
+                    lambda r: "paused: the bots start nothing on their own" if r else "on again (each project's dial applies)")
+
+    def set_autonomy(self, project_id: str, level: str) -> None:
+        self._later(self.engine.set_autonomy(project_id, level), "Project", lambda r: f"on its own: {r.capitalize()}")
 
     def _bot_menu(self, parent: QMenu, b: dict[str, Any]) -> None:
         title = f"{b['name']} — {b['role']}" + (f" — {b['job'][:50]}" if b.get("job") else "")

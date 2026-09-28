@@ -25,7 +25,8 @@ from omnibots.providers.toolcalls import (
     build_param_registry, extract_think, has_tool_intent, parse_text_tool_calls, recovery_message,
     strip_think, strip_tool_call_text,
 )
-from omnibots.runtime.approvals import ApprovalCenter
+from omnibots.board.types import topic_project
+from omnibots.runtime.approvals import ALLOCATED, MORE_TOKENS, ApprovalCenter
 from omnibots.runtime.context import first_user_goal, maybe_auto_compact, steering_message, trim_old_tool_results
 from omnibots.runtime.events import BotEvents, ToolTextFilter
 from omnibots.runtime.sandbox import Sandbox
@@ -189,6 +190,14 @@ class BotAgent:
                     nudged = True
                     msgs.append({"role": "user", "content": "[system note] Only 3 tool iterations remain this turn. Finish the smallest complete unit of work, verify if possible, then summarize what is done and what remains."})
 
+                if (self.budget and self.priority != "boss" and (over := await self.budget.check_allocation(job_id, self.bot_id))
+                        and not await self._ask_for_more_tokens(over, msgs, job_id)):
+                    why = (f"this bot's background tokens for today in this project are used up "
+                           f"({over['used']:,}/{over['cap']:,}) and no more were allocated")
+                    await ev.emit("console", f"■ {why}; stopping here")
+                    await ev.set_state("blocked", "background tokens used up")
+                    await ev.flush()
+                    return TurnResult("budget", "", self.step, msgs, total_calls, error=why, models_used=models)
                 if self.budget and (why := await self.budget.check_tokens(self.bot_id)):
                     await ev.emit("console", f"■ {why}; stopping here")
                     await ev.set_state("blocked", "token cap reached")
@@ -283,6 +292,62 @@ class BotAgent:
             await ev.emit("console", f"⏳ all MiniMax seats are busy: waiting in line (#{ahead})")
         self.seat = await seats.acquire(self.bot_id, self.priority)
         await ev.emit("console", f"✔ MiniMax seat {self.seat.number} booked for this job")
+
+    async def _ask_for_more_tokens(self, over: dict[str, Any], msgs, job_id) -> bool:
+        """A9.c.03: this bot's background tokens for today in this project are used up. It asks Omi on
+        the board with its estimate; Omi puts the request to the user (a card in Omi's window).
+        Yes → that much more for this bot today, and it goes on from the same step."""
+        from omnibots.bots.profile import BOSS_ID              # here, not at the top: bots imports runtime
+        ev = self.events
+        pid, used, cap = over["project_id"], over["used"], over["cap"]
+        await ev.emit("console", f"■ my background tokens for today are used up ({used:,}/{cap:,}); asking Omi for more")
+        est, why = await self._estimate_tokens_left(msgs, job_id)
+        if self.budget.bus:
+            await self.budget.bus.publish(
+                topic_project(pid), "HELP_REQUEST",
+                {"text": f"I used my {cap:,} background tokens for today in this project. I need about {est:,} more to finish: {why}",
+                 "kind": MORE_TOKENS, "tokens": est},
+                sender_type="bot", sender_id=self.bot_id, recipient_id=BOSS_ID, project_id=pid, job_id=job_id)
+        summary = (f"{self.name} used its {cap:,} background tokens for today on this project and needs about {est:,} more "
+                   f"to finish: {why} Approve to allocate {est:,} more tokens to {self.name} for today.")
+        await ev.set_state("waiting_approval", "more tokens (asked Omi)")
+        with self.waiting_on_user():
+            decision = await self.approvals.request(
+                bot_id=BOSS_ID, job_id=job_id, tool=MORE_TOKENS, risk="R2", summary=summary,
+                rehearsal={"bot": self.bot_id, "bot_name": self.name, "project": pid,
+                           "used_today": used, "allocated_today": cap, "asking_for": est})
+        if not decision.approved:
+            return False
+        if not decision.reason.startswith(ALLOCATED):           # the allocations window already added it
+            # a step can overshoot: the grant covers that too, so `est` really is what's left to spend
+            await self.budget.allocate(pid, self.bot_id, est + max(0, used - cap))
+        await ev.emit("console", f"✔ more tokens allocated (today: {await self.budget.allocation_today(pid, self.bot_id):,})")
+        return True
+
+    async def _estimate_tokens_left(self, msgs, job_id) -> tuple[int, str]:
+        """One short, tool-less call: the bot's own guess of the tokens it still needs. Falls back to
+        what this job used so far when the model gives no usable number."""
+        est, why = 0, ""
+        note = ("[system note] This project's token budget for today is used up; the user decides whether to add more. "
+                "Do not call tools. Reply with ONLY this JSON: {\"tokens\": <additional tokens you need to finish this job>, "
+                f"\"why\": \"<one short sentence: what is left to do>\"}}. For scale, this job has used {self.tokens_used:,} tokens so far.")
+        try:
+            routed = await self.router.chat(self.bot_id, self.chain, trim_old_tool_results(msgs + [{"role": "user", "content": note}]),
+                                            None, job_id=job_id, priority=self.priority)
+            self.tokens_used += (routed.tokens_in or 0) + (routed.tokens_out or 0)
+            raw = routed.result.message.get("content") or ""
+            raw = strip_think(raw) if routed.result.thinking else extract_think(raw)["rest"]
+            start, end = raw.find("{"), raw.rfind("}")
+            data = json.loads(raw[start:end + 1])
+            est, why = int(float(data.get("tokens") or 0)), " ".join(str(data.get("why") or "").split())[:300]
+        except Exception as e:                        # no answer, not JSON, providers busy: fall back below
+            log.info("token estimate failed for %s: %s", self.bot_id, e)
+        if est <= 0:
+            est = max(50_000, self.tokens_used)
+            why = why or "(no estimate from the model; this is about what the job used so far)"
+        est = min(max(est, 10_000), 2_000_000)
+        est = -(-est // 10_000) * 10_000              # round up to the next 10k
+        return est, (why if why.endswith((".", "!", "?", ")")) else why + ".")
 
     async def _call_model(self, msgs, schemas, job_id):
         ev = self.events

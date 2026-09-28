@@ -1,8 +1,9 @@
 """web_search and web_fetch: a port of Omni's extensions/web-search.js
 (pulled forward from A8.b.01 for A7's research acceptance).
 
-- Search: DuckDuckGo lite (no API key, no account), falling back to the
-  instant-answer API.
+- Search: the user's private Search Gateway (A8.b.05, SearXNG behind a key), falling
+  back to DuckDuckGo's instant-answer API. (DuckDuckGo lite challenged our honest user
+  agent, so the lite scraper was removed in A15.a.02.)
 - Fetch: any public http(s) page as readable text.
 - SSRF guard (same policy as Omni): loopback, private, link-local (cloud
   metadata) and unique-local addresses are refused, both as literal IPs and
@@ -23,7 +24,7 @@ import os
 import re
 import socket
 from typing import Any
-from urllib.parse import quote_plus, unquote, urljoin, urlparse
+from urllib.parse import quote_plus, urljoin, urlparse
 
 import httpx
 
@@ -100,33 +101,6 @@ def html_to_text(html: str) -> str:
     s = re.sub(r"<[^>]+>", "", s)
     s = htmllib.unescape(s)
     return "\n".join(l for l in (re.sub(r"\s+", " ", x).strip() for x in s.split("\n")) if l)
-
-
-def _real_url(href: str) -> str:
-    m = re.search(r"[?&]uddg=([^&]+)", href)
-    if m:
-        return unquote(m.group(1))
-    return "https:" + href if href.startswith("//") else href
-
-
-async def ddg_lite(client: httpx.AsyncClient, query: str, max_results: int = 8) -> str:
-    res = await client.get("https://lite.duckduckgo.com/lite/?q=" + quote_plus(query))
-    if res.status_code >= 400:
-        return f"search failed: HTTP {res.status_code}"
-    page = res.text
-    link_re = re.compile(r"""<a[^>]+href=['"]([^'"]+)['"][^>]*class=['"]result-link['"][^>]*>(.*?)</a>""", re.I | re.S)
-    snip_re = re.compile(r"""class=['"]result-snippet['"][^>]*>(.*?)</td>""", re.I | re.S)
-    out = []
-    for m in link_re.finditer(page):
-        if len(out) >= max_results:
-            break
-        link = _real_url(htmllib.unescape(m.group(1)))
-        title = htmllib.unescape(re.sub(r"<[^>]+>", "", m.group(2))).strip()
-        sm = snip_re.search(page, m.end(), m.end() + 2000)
-        snippet = re.sub(r"\s+", " ", htmllib.unescape(re.sub(r"<[^>]+>", "", sm.group(1)))).strip() if sm else ""
-        if title and link:
-            out.append(f"- {title}\n  {link}" + (f"\n  {snippet}" if snippet else ""))
-    return "\n".join(out) if out else "(no results)"
 
 
 async def ddg_instant(client: httpx.AsyncClient, query: str) -> str | None:

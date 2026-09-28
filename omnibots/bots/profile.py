@@ -42,7 +42,7 @@ class BotProfile:
     description: str = ""
     status: str = "idle"
     chain: list[str] = field(default_factory=lambda: list(MINIMAX_FIRST))
-    multi_provider: bool = False
+    multi_provider: bool = True        # A15.a.03: on = fail over across the whole chain; off = stay on the first provider
     risk_ceiling: str = "R3"
     limits: dict[str, Any] = field(default_factory=dict)
     skills: list[str] = field(default_factory=list)
@@ -81,7 +81,7 @@ class BotRegistry:
     # ── create / read ──────────────────────────────────────────────────
     async def create(self, name: str, role: str, *, description: str = "", chain: list[str] | None = None,
                      skills: list[str] | None = None, tools: list[str] | None = None, risk_ceiling: str = "R3",
-                     limits: dict[str, Any] | None = None, multi_provider: bool = False, created_by: str = "user",
+                     limits: dict[str, Any] | None = None, multi_provider: bool = True, created_by: str = "user",
                      bot_id: str | None = None) -> BotProfile:
         name, role = (name or "").strip(), (role or "").strip()
         if not name or not role:

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 from omnibots.providers.router import Router
 
@@ -28,23 +27,6 @@ class Review:
     findings: list[str]
     text: str
     model: str
-
-
-def workspace_snapshot(files: list[Path], root: Path, max_chars: int = 40_000) -> str:
-    parts, used = [], 0
-    for f in files:
-        try:
-            body = f.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        rel = f.relative_to(root) if f.is_relative_to(root) else f
-        chunk = f"=== {rel} ===\n{body}\n"
-        if used + len(chunk) > max_chars:
-            parts.append(f"=== {rel} === (omitted, size limit)")
-            continue
-        parts.append(chunk)
-        used += len(chunk)
-    return "\n".join(parts)
 
 
 async def review(router: Router, *, reviewer_id: str, chain: list[str], task: str, changes: str) -> Review:

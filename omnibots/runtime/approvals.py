@@ -19,6 +19,10 @@ from typing import Any, Awaitable, Callable
 
 from omnibots.runtime.tools import RISK_ORDER
 
+# A9.c.03: the approval Omi asks for when a bot's background tokens for today are used up.
+MORE_TOKENS = "more_tokens"
+ALLOCATED = "allocated"          # the reason on a MORE_TOKENS approval the allocations window granted
+
 
 @dataclass
 class Scope:

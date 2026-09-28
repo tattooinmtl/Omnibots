@@ -39,7 +39,10 @@ def test_listen_loop_does_not_stop_at_thirty_minutes(tmp_path):
             e = await build(tmp_path, mock)
             p = _presence(e, poll_seconds=0.02)
             task = asyncio.create_task(p.run())
-            await asyncio.sleep(0.35)
+            for _ in range(250):                         # up to 5 s: count cycles, don't assume the PC's speed
+                await asyncio.sleep(0.02)
+                if p.polls >= 8:
+                    break
             alive = not task.done()
             polls = p.polls
             task.cancel()

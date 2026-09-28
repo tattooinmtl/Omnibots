@@ -126,7 +126,11 @@ def test_r3_parks_until_approved_then_runs(tmp_path):
             mock.script("fake", sse("", tool_calls=[call("write_file", path=str(outside), content="from the bot")]), sse("saved it"))
             h = Harness(tmp_path, mock, db=db)
             task = asyncio.create_task(h.bot.run("save a note to my folder"))
-            await asyncio.sleep(1.0)
+            for _ in range(500):                              # up to 10 s: wait for the card, not a guess (A15.a.05)
+                await asyncio.sleep(0.02)
+                if h.approvals.list_pending():
+                    break
+            await asyncio.sleep(0.2)                          # parked: still nothing written a moment later
             parked = not task.done() and not outside.exists()
             pending = h.approvals.list_pending()
             row = await db.read_one("SELECT risk_class, status, summary FROM approvals")

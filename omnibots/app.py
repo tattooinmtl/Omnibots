@@ -20,7 +20,7 @@ from PySide6.QtWidgets import QApplication
 
 from omnibots import __version__
 from omnibots.engine import Engine
-from omnibots.ipc import SingleInstance, send_command
+from omnibots.ipc import Deferred, SingleInstance, send_command
 from omnibots.logging_setup import setup_logging
 from omnibots.paths import get_paths
 from omnibots.settings import load_settings
@@ -98,48 +98,47 @@ def main(argv: list[str] | None = None) -> int:
             window.bring_to_front()
         return {"ok": True}
 
-    def cmd_status(_msg):
-        status = engine.submit(engine.status()).result(timeout=5)
-        return {"ok": True, "status": status}
+    # A15.a.01: engine work answers later (a Deferred), so a pipe command never freezes the window.
+    def later(coro, then, timeout=30):
+        return Deferred(engine.submit(coro), then, timeout)
 
-    def run(coro, timeout=30):
-        return engine.submit(coro).result(timeout=timeout)
+    def cmd_status(_msg):
+        return later(engine.status(), lambda status: {"ok": True, "status": status}, timeout=5)
 
     def cmd_goal(msg):
         text = str(msg.get("text") or "").strip()
         if not text:
             return {"ok": False, "error": "goal needs text"}
-        return {"ok": True, "project_id": run(engine.start_goal(text))}
+        return later(engine.start_goal(text), lambda pid: {"ok": True, "project_id": pid})
 
     def cmd_tell(msg):
         bot, text = str(msg.get("id") or "omi"), str(msg.get("text") or "").strip()
         if not text:
             return {"ok": False, "error": "tell needs text"}
-        run(engine.tell(bot, text))
-        return {"ok": True}
+        return later(engine.tell(bot, text), lambda _: {"ok": True})
 
     def team_cmd(name):
         def handler(msg):
             fn = getattr(engine.team, name)
             if name.endswith("_bot"):
                 bot = str(msg.get("id") or "")
-                return {"ok": bool(run(fn(bot))), "bot": bot}
-            return {"ok": True, **run(fn(panic=True) if name == "panic" else fn(), timeout=60)}
+                return later(fn(bot), lambda ok: {"ok": bool(ok), "bot": bot})
+            return later(fn(panic=True) if name == "panic" else fn(), lambda r: {"ok": True, **r}, timeout=60)
         return handler
 
     def cmd_bots(_msg):
         async def listing():
             return [{"id": b.id, "name": b.name, "role": b.role, "status": b.status, "chain": b.chain[:2]}
                     for b in await engine.registry.list()]
-        return {"ok": True, "bots": engine.submit(listing()).result(timeout=5)}
+        return later(listing(), lambda bots: {"ok": True, "bots": bots}, timeout=5)
 
     def cmd_approvals(_msg):
         return {"ok": True, "pending": engine.approvals.list_pending()}
 
     def _decide(msg, approved):
         aid = str(msg.get("id") or msg.get("text") or "")
-        done = engine.submit(engine.approvals.decide(aid, approved, "user via control pipe")).result(timeout=5)
-        return {"ok": bool(done), **({} if done else {"error": f"no pending approval {aid!r}"})}
+        return later(engine.approvals.decide(aid, approved, "user via control pipe"),
+                     lambda done: {"ok": bool(done), **({} if done else {"error": f"no pending approval {aid!r}"})}, timeout=5)
 
     def cmd_preapprove(msg):
         # --text '{"tool": "web_fetch", "domain": "api.github.com", "count": 5, "minutes": 60}'
@@ -197,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         return {"ok": True, "rebuild_ms": ms, "tooltip": tray.icon.toolTip(), "visible": tray.icon.isVisible(), "menu": items(tray.menu)}
 
     def cmd_budget(_msg):
-        return {"ok": True, "budget": run(engine.budget.snapshot(), timeout=10)}
+        return later(engine.budget.snapshot(), lambda b: {"ok": True, "budget": b}, timeout=10)
 
     def cmd_stop(_msg):
         QTimer.singleShot(0, app.quit)
@@ -208,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         {"show": cmd_show, "status": cmd_status, "goal": cmd_goal, "stop": cmd_stop, "approvals": cmd_approvals, "bots": cmd_bots,
          "approve": lambda m: _decide(m, True), "deny": lambda m: _decide(m, False), "tell": cmd_tell,
          "pause": team_cmd("pause"), "resume": team_cmd("resume"), "halt": team_cmd("stop"), "start": team_cmd("start"),
-         "restart": team_cmd("restart"), "panic": lambda m: {"ok": True, **run(engine.team.stop(panic=True), timeout=60)},
+         "restart": team_cmd("restart"), "panic": lambda m: later(engine.team.stop(panic=True), lambda r: {"ok": True, **r}, timeout=60),
          "pause_bot": team_cmd("pause_bot"), "resume_bot": team_cmd("resume_bot"), "stop_bot": team_cmd("stop_bot"),
          "preapprove": cmd_preapprove, "budget": cmd_budget, "snapshot": cmd_snapshot, "tray": cmd_tray},
     )
