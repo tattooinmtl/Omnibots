@@ -1323,6 +1323,8 @@ All were decided by the user on 2026-09-25. Changing any of them needs the user'
 
 ## 9. Notes Log
 
+- 2026-09-29 Grok: website (A11.o) locked. `tests/test_website_omnibots.py` fails if the install page drops the Works with Omni section, the Omni install line, or the `~\.omni` / `%USERPROFILE%\.omnibots` paths. The page in git already had the section; the live FastComet copy was still the 27 Sep upload.
+
 - 2026-09-29 Claude: website (A11.o): a "Works with Omni" section and a header link to https://omni.globalwarningnetworks.com (user: "explain they both work with one another, so best to install Omni first then OmniBots"): Omni holds the provider keys and starts OmniBots with `/omnibots`; step 1 installs Omni (`irm https://omni.globalwarningnetworks.com/install.ps1 | iex`, checked live: 200), step 2 OmniBots. The install text now says `%USERPROFILE%\.omnibots`, and the old "You also need Omni" link (it pointed at OmniBots' own README) goes to Omni's site. Checked in the browser (local server): renders, no sideways scroll at phone width. The matching notice for Omni's website is in `~/.omni/instructions_omnibots.md`.
 
 - 2026-09-29 Claude: the move into `~/.omnibots` (A16.f.03) exposed two A9/A10 sandbox bugs, fixed: sandboxed Python now runs on the base interpreter (a venv in the user folder is unreadable to the AppContainer), and the Tool Forge grants a copy of the omnibots package instead of its parent folder (which is now the data home). Affects A9.a.01 and A10.b.01.
