@@ -385,12 +385,15 @@ async def check_domain(args: dict[str, Any], ctx: ToolContext) -> str:
             lines.append(f"  {t}: {', '.join(vals[:6])}")
     if not recs["A"] and not recs["AAAA"] and not recs["CNAME"]:
         lines.append("  no address records: the domain doesn't point anywhere yet")
-    found = [h for h, marks in KNOWN_TARGETS.items() if any(m in v for v in recs["CNAME"] + recs["A"] for m in marks)]
+    # the host's own names (x.netlify.app) point straight at its addresses: the name itself says where it is (found live)
+    found = [h for h, marks in KNOWN_TARGETS.items()
+             if any(m in v for v in [*recs["CNAME"], *recs["A"], domain] for m in marks)]
     if found:
         lines.append(f"  points at: {', '.join(found)}")
     if expect:
         seen = recs["CNAME"] + recs["A"] + recs["AAAA"]
-        ok = any(expect == v or v.endswith("." + expect) or expect in v for v in seen) or expect in found
+        ok = (domain == expect or domain.endswith("." + expect) or expect in found
+              or any(expect == v or v.endswith("." + expect) or expect in v for v in seen))
         lines.append(f"  expected {expect}: {'yes' if ok else 'NO — the DNS points elsewhere (changes can take up to a day)'}")
     lines.append(f"  https: {await live_check('https://' + domain, tries=1)}")
     return "\n".join(lines)

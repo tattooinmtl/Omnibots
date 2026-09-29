@@ -276,7 +276,8 @@ def test_cloudflare_runs_wrangler_with_the_token_in_its_environment_only(tmp_pat
 
 
 def test_check_domain_reads_dns_and_says_where_it_points(monkeypatch):
-    answers = {("shop.example.com", "CNAME"): [{"type": 5, "data": "my-todo.netlify.app."}],
+    answers = {("my-todo.netlify.app", "A"): [{"type": 1, "data": "18.208.88.157"}],
+               ("shop.example.com", "CNAME"): [{"type": 5, "data": "my-todo.netlify.app."}],
                ("shop.example.com", "A"): [{"type": 5, "data": "my-todo.netlify.app."}, {"type": 1, "data": "75.2.60.5"}],
                ("bare.example.com", "A"): []}
 
@@ -294,8 +295,10 @@ def test_check_domain_reads_dns_and_says_where_it_points(monkeypatch):
         return (await t.fn({"domain": "https://shop.example.com/cart", "expect": "my-todo.netlify.app"}, None),
                 await t.fn({"domain": "shop.example.com", "expect": "me.github.io"}, None),
                 await t.fn({"domain": "bare.example.com"}, None),
+                await t.fn({"domain": "my-todo.netlify.app", "expect": "netlify.app"}, None),   # found live: said NO
                 await t.fn({"domain": "not a domain"}, None))
-    good, wrong, bare, bad = run(go())
+    good, wrong, bare, own, bad = run(go())
+    assert "expected netlify.app: yes" in own and "points at: netlify" in own
     assert "CNAME: my-todo.netlify.app" in good and "points at: netlify" in good and "expected my-todo.netlify.app: yes" in good
     assert "expected me.github.io: NO" in wrong
     assert "doesn't point anywhere" in bare and bad.startswith("ERROR")
