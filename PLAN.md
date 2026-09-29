@@ -1305,6 +1305,8 @@ All were decided by the user on 2026-09-25. Changing any of them needs the user'
 
 ## 9. Notes Log
 
+- 2026-09-28 Claude: Omni shipped 3.5.7 (adds MiniMax-M3.1-Flash-Preview to minimax.io); OmniBots' Omni snapshots were out of date and 4 parity tests failed. Regenerated with `node tools/omni_defaults_snapshot.mjs` and `node tools/gen_toolcall_goldens.mjs` (read Omni only) → `tests/test_a1_omni_parity.py` + `tests/test_a2_toolcalls.py` 74 passed. Affects A1 (the Omni reader) and A2.
+
 - 2026-09-28 Claude: **A14 live runs** (scenarios 1 and 2 passed; 3–5 blocked on A10). Fixes that touch other phases: the tool relay's request text and errors (A8.d.02), the automatic review and reviews committing first (A15.a.07, A7), temp folders in the sandbox and `-s -P` instead of `-I` (A9.a.01), build junk kept out of project history (A11.m), `a2a.INBOX_TYPES` includes TOOL_REQUEST (A7), a relayed run counts as the asker's evidence (A8.d.02 × A4.a.08; `TurnResult.runs`).
 
 - 2026-09-27 Claude: **A16 Safety and upkeep** added (user OK): prompt-injection tests (A16.a), your 👍/👎 on the work (A16.b), backup / restore / retention (A16.c), update from the About window (A16.d), Omi reviewing token asks (A16.e). Suggested Phase A order: A15.a → A16.a + A16.c → A15.c → A16.b → A13 + projects panel → rest of A15 → A14. Cross-phase: A16.c.02 backs up before migrations (A0.b); A16.e extends A9.c.03; A16.b feeds A8.c.02 and A13.
