@@ -1313,6 +1313,8 @@ All were decided by the user on 2026-09-25. Changing any of them needs the user'
 
 ## 9. Notes Log
 
+- 2026-09-28 Claude: the tool-call goldens check (`tools/gen_toolcall_goldens.mjs --check`, `test_goldens_are_current_with_installed_omni`) compared the file byte for byte, Omni's version number included, so every Omni release failed it with nothing changed (Omni 3.5.8 only added the /omnibots launcher). It now ignores `omni_version` and still fails on any changed case (checked both ways). Affects A2.
+
 - 2026-09-28 Claude: Omni shipped 3.5.7 (adds MiniMax-M3.1-Flash-Preview to minimax.io); OmniBots' Omni snapshots were out of date and 4 parity tests failed. Regenerated with `node tools/omni_defaults_snapshot.mjs` and `node tools/gen_toolcall_goldens.mjs` (read Omni only) → `tests/test_a1_omni_parity.py` + `tests/test_a2_toolcalls.py` 74 passed. Affects A1 (the Omni reader) and A2.
 
 - 2026-09-28 Claude: **A14 live runs** (scenarios 1 and 2 passed; 3–5 blocked on A10). Fixes that touch other phases: the tool relay's request text and errors (A8.d.02), the automatic review and reviews committing first (A15.a.07, A7), temp folders in the sandbox and `-s -P` instead of `-I` (A9.a.01), build junk kept out of project history (A11.m), `a2a.INBOX_TYPES` includes TOOL_REQUEST (A7), a relayed run counts as the asker's evidence (A8.d.02 × A4.a.08; `TurnResult.runs`).
