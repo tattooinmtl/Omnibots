@@ -1,4 +1,4 @@
-"""Checks and repairs, driven by layout.json (see docs/DOCTOR.md).
+"""Checks and repairs, driven by layout.json (see README.md).
 
 Rules the doctor keeps:
   - It creates what's missing and upgrades what's old; it never deletes a file or a folder.

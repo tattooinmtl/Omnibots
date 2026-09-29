@@ -46,3 +46,36 @@ dist/
 # your local media (the app ships the small splash in omnibots/ui/assets/)
 /Logo.png
 /videos/
+
+# Only what the app needs is published (user, 2026-09-29): README.md is the one doc. Plans, agent rules,
+# audits, layout mockups, screenshots, the website (uploaded by hand) and dev-only preview scripts stay
+# on the developer's PC.
+/*.md
+!/README.md
+/*.png
+/*.jpg
+/docs/
+/website/
+/omni_patch/
+/omni-plugin.json
+/tests/test_website_omnibots.py
+/tools/build_icons.py
+/tools/face_gif.py
+/tools/face_sheet.py
+/tools/props_sheet.py
+/tools/site_screenshots.py
+/tools/style_sheet.py
+/tools/taunt_preview.py
+/tools/window_preview.py
+/tools/audit_*.py
+
+# Never publish keys or credentials
+/config/
+*.sqlite
+*.sqlite-*
+*.secret
+secrets.*
+*.pem
+*.pfx
+*.p12
+credentials*.json
