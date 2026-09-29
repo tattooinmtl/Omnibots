@@ -9,14 +9,16 @@
 
   What it does (and nothing else):
     1. checks for Python 3.12+ and Git (offers to install them with winget, asking first)
-    2. downloads OmniBots into $InstallDir (or updates it with git pull if it's already there)
+    2. downloads OmniBots into $InstallDir, by default %USERPROFILE%\.omnibots next to your bots' data, like
+       ~/.omni (or updates it with git pull if it's already there)
     3. makes its own Python environment ($InstallDir\.venv) and installs the dependencies there
     4. installs the browser the bots use (Chromium via Playwright) unless -NoBrowser
     5. adds a Start menu shortcut "OmniBots" (unless -NoShortcut)
-  Your settings, bots and projects live in %USERPROFILE%\.omnibots and your output folder: an update never touches them.
+  Your settings, bots and projects live in %USERPROFILE%\.omnibots (git ignores them) and your output folder: an
+  install or update never touches them.
 #>
 param(
-    [string]$InstallDir = $(if ($env:OMNIBOTS_DIR) { $env:OMNIBOTS_DIR } else { Join-Path $env:LOCALAPPDATA "OmniBots" }),
+    [string]$InstallDir = $(if ($env:OMNIBOTS_DIR) { $env:OMNIBOTS_DIR } else { Join-Path $HOME ".omnibots" }),
     [string]$Branch = "master",
     [switch]$NoShortcut,
     [switch]$NoBrowser,
@@ -85,6 +87,18 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
     git -C $InstallDir checkout --quiet $Branch
     git -C $InstallDir pull --quiet --ff-only origin $Branch
     if ($LASTEXITCODE -ne 0) { Fail "Couldn't update (local changes in $InstallDir?). Fix them or reinstall into an empty folder." }
+} elseif ((Test-Path (Join-Path $InstallDir "settings.toml")) -or (Test-Path (Join-Path $InstallDir "db"))) {
+    # the OmniBots data folder (bots, database, settings): the code goes in next to it, like ~/.omni. git ignores
+    # every data name (.gitignore), and a checkout never overwrites a file that's already there: it stops instead.
+    Say "Installing OmniBots into $InstallDir, next to your bots' data (it stays as it is)"
+    git -C $InstallDir init --quiet
+    git -C $InstallDir remote add origin $Repo
+    git -C $InstallDir fetch --quiet origin $Branch
+    if ($LASTEXITCODE -eq 0) { git -C $InstallDir checkout --quiet -b $Branch --track "origin/$Branch" }
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -Recurse -Force (Join-Path $InstallDir ".git")      # only the .git made just now; the data is untouched
+        Fail "Couldn't put the code in $InstallDir (a file there has the same name as one of OmniBots' files?). Nothing was changed."
+    }
 } else {
     if ((Test-Path $InstallDir) -and (Get-ChildItem $InstallDir -Force | Select-Object -First 1)) {
         Fail "$InstallDir exists and isn't an OmniBots install. Pick another folder with -InstallDir."

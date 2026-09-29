@@ -12,6 +12,26 @@ dist/
 .omnibots/
 .omnibots-test*/
 
+# The installer puts the code in ~/.omnibots itself, next to that data (like ~/.omni), so every name the app
+# writes in its home stays out of git: never committed, never shown as a change, never touched by an update.
+/backups/
+/bots/
+/db/
+/forge/
+/logs/
+/profiles/
+/project-history/
+/projects/
+/relays/
+/sandbox/
+/sessions/
+/skills/
+/settings.toml
+/settings.json
+/user_profile.md
+/omnibots.lock
+/update.log
+
 # API keys and secrets dropped in the repo folder by hand
 *apikey*
 *api_key*
