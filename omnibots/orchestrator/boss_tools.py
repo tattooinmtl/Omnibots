@@ -55,13 +55,14 @@ class GoalContext:
 class BossToolkit:
     def __init__(self, *, ctx: GoalContext, db, bus, inbox: Inbox, registry, runner, graph, projects, ledger,
                  factory: BotFactory, router, skills: list | None = None, planner_chain: list[str] | None = None,
-                 playbooks=None, schedule=None):
+                 playbooks=None, schedule=None, doctor=None):
         self.c, self.db, self.bus, self.inbox = ctx, db, bus, inbox
         self.registry, self.runner, self.graph, self.projects, self.ledger = registry, runner, graph, projects, ledger
         self.factory, self.router, self.skills = factory, router, skills or []
         self.chain = planner_chain or list(MINIMAX_FIRST)
         self.schedule = schedule                            # A15.f.03: routines, triggers, night shift (the app only)
         self.playbooks = playbooks
+        self.doctor = doctor                                # A16.d.03: the app's doctor (the app only)
 
     # ── helpers ────────────────────────────────────────────────────────
     async def _plan_jobs(self):
@@ -461,6 +462,14 @@ class BossToolkit:
             for m in deferred:                              # keep bot messages for wait_for_mention
                 self.inbox.sub.queue.put_nowait(m)
 
+    async def call_doctor(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        """A16.d.03: the user asked Omi to check the setup (dependencies, providers, folders, config)."""
+        from omnibots.doctor.doctor import Finding, Report
+        report = await self.doctor(fix=args.get("fix", True) is not False, online=bool(args.get("online")))
+        rep = Report(findings=[Finding(**f) for f in report.get("findings", [])], mode=report.get("mode", ""))
+        return rep.text() + ("\n(Keys are never shown. Anything the doctor couldn't repair needs the user: tell them the → step.)"
+                             if rep.problems() else "")
+
     def tools(self) -> list[Tool]:
         T = lambda name, desc, props, fn, req=(), risk="R0", timeout=600.0: Tool(
             name, desc, {"type": "object", "properties": props, "required": list(req)}, risk, fn, timeout=timeout, path_arg=None)
@@ -520,4 +529,11 @@ class BossToolkit:
               {"name": s, "kind": s, "config": {"type": "object"}, "goal": s}, self.add_trigger, req=("name", "kind", "config", "goal")),
             T("enqueue_night", "Queue low-priority work for the night shift (the cheap lane, only while the user is away).",
               {"goal": s}, self.enqueue_night, req=("goal",)),
-        ] if self.schedule is not None else [])
+        ] if self.schedule is not None else []) + ([
+            T("call_doctor", "Run the OmniBots doctor when the user asks, or when something looks broken (a provider "
+              "fails, a folder or dependency is missing). It checks folders, settings, the database, Python packages, "
+              "the provider config and keys (never shown), and old copies in other places; it repairs what it safely "
+              "can (fix, default true) and never deletes. online=true also tests each provider key with its server.",
+              {"fix": {"type": "boolean"}, "online": {"type": "boolean"}}, self.call_doctor, timeout=300,
+              risk="R1"),
+        ] if self.doctor is not None else [])

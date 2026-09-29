@@ -16,6 +16,7 @@ dist/
 # writes in its home stays out of git: never committed, never shown as a change, never touched by an update.
 /backups/
 /bots/
+/config/
 /db/
 /forge/
 /logs/

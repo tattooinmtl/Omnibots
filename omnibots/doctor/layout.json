@@ -1,0 +1,81 @@
+{
+  "_about": "The OmniBots doctor's reference: every folder, file, dependency and setting OmniBots and Omni need to work together. The doctor (python -m omnibots.doctor, Settings -> Doctor, or Omi's call_doctor tool) checks each entry, and repairs the ones marked fix. Paths use {tokens}: {home} = %OMNIBOTS_HOME% or ~/.omnibots; {omni} = Omni's install folder (~/.omni); {omni_home} = %OMNI_HOME% or {omni}/agent; {config} = {home}/config (OmniBots' own provider config, only when Omni isn't installed); {appdata} = %LOCALAPPDATA%/OmniBots; {output} = [output] folder in settings.toml. Explained in docs/DOCTOR.md.",
+  "version": 1,
+
+  "allowed_roots": {
+    "_about": "The only places OmniBots and Omni keep config, keys and data. Anything that looks like their config somewhere else is reported (never deleted).",
+    "paths": ["{home}", "{omni}", "{appdata}", "{output}"]
+  },
+
+  "folders": [
+    {"id": "home",            "path": "{home}",            "fix": true,  "why": "OmniBots' home: code, data and settings"},
+    {"id": "home.db",         "path": "{home}/db",         "fix": true,  "why": "the SQLite database (and the encrypted provider keys)"},
+    {"id": "home.bots",       "path": "{home}/bots",       "fix": true,  "why": "each bot's profile and memory.md"},
+    {"id": "home.projects",   "path": "{home}/projects",   "fix": true,  "why": "project records"},
+    {"id": "home.sandbox",    "path": "{home}/sandbox",    "fix": true,  "why": "where the bots' scripts run"},
+    {"id": "home.profiles",   "path": "{home}/profiles",   "fix": true,  "why": "the bots' browser profiles"},
+    {"id": "home.logs",       "path": "{home}/logs",       "fix": true,  "why": "app.log and ui-stalls.log"},
+    {"id": "home.skills",     "path": "{home}/skills",     "fix": true,  "why": "OmniBots' own skills"},
+    {"id": "home.sessions",   "path": "{home}/sessions",   "fix": true,  "why": "saved chat sessions"},
+    {"id": "home.backups",    "path": "{home}/backups",    "fix": true,  "why": "automatic backups"},
+    {"id": "appdata",         "path": "{appdata}",         "fix": true,  "why": "Qt's cache for the window (qtpipelinecache); Qt makes it slower to start without it"},
+    {"id": "appdata.cache",   "path": "{appdata}/cache",   "fix": true,  "why": "Qt's pipeline cache"},
+    {"id": "output",          "path": "{output}",          "fix": true,  "why": "where the bots' projects go (chosen on first start)", "optional_when_unset": true}
+  ],
+
+  "files": [
+    {"id": "home.settings",   "path": "{home}/settings.toml",        "fix": "default_settings", "why": "OmniBots' settings (never provider keys)"},
+    {"id": "home.database",   "path": "{home}/db/omnibots.sqlite",   "fix": "migrate",          "why": "the database, at the newest schema"},
+    {"id": "code.main",       "path": "{code}/omnibots/__main__.py", "fix": false,              "why": "the OmniBots code (python -m omnibots)"},
+    {"id": "code.venv",       "path": "{code}/.venv/Scripts/python.exe", "fix": false,          "why": "OmniBots' Python environment (made by install.ps1)", "severity": "warn"}
+  ],
+
+  "omni": {
+    "_about": "Checked read-only. The doctor never changes Omni's files; Omni's own /doctor looks after Omni.",
+    "files": [
+      {"id": "omni.config",   "path": "{omni}/omni.config.json",                "why": "Omni's project config (skills, MCP servers, extensions)"},
+      {"id": "omni.settings", "path": "{omni_home}/settings.json",              "why": "the providers and keys both apps share"},
+      {"id": "omni.launcher", "path": "{omni}/extensions/omnibots-launcher.js",  "why": "lets Omni start OmniBots (/omnibots)", "severity": "warn"}
+    ],
+    "extension_listed": "extensions/omnibots-launcher.js"
+  },
+
+  "standalone": {
+    "_about": "Used only when Omni isn't installed: the same file formats as Omni's home. Keys are never in these files; they're DPAPI-encrypted in the provider_keys table of {home}/db/omnibots.sqlite.",
+    "files": [
+      {"id": "config.settings", "path": "{config}/settings.json",     "fix": true, "why": "providers and models, in Omni's settings.json format, no keys"},
+      {"id": "config.env",      "path": "{config}/.env",              "fix": true, "why": "Omni's .env format; keys typed here are moved into the encrypted store"},
+      {"id": "config.project",  "path": "{config}/omni.config.json",  "fix": true, "why": "skills and MCP servers, in Omni's format"}
+    ]
+  },
+
+  "python": {"min": "3.11"},
+  "packages": [
+    {"module": "PySide6",    "pip": "PySide6",    "why": "the window and the tray icon"},
+    {"module": "keyring",    "pip": "keyring",    "why": "the bots' secrets in Windows Credential Manager"},
+    {"module": "httpx",      "pip": "httpx",      "why": "talking to the providers"},
+    {"module": "pydantic",   "pip": "pydantic",   "why": "data checks"},
+    {"module": "playwright", "pip": "playwright", "why": "the bots' browser", "severity": "warn"}
+  ],
+  "programs": [
+    {"name": "git", "why": "project history and updates", "severity": "warn"}
+  ],
+
+  "env": [
+    {"name": "OMNIBOTS_HOME", "expect": "{home}",  "why": "moves OmniBots' data; only set it on purpose"},
+    {"name": "OMNIBOTS_DIR",  "expect": "{code}",  "why": "where Omni's /omnibots looks for the code"},
+    {"name": "OMNI_HOME",     "expect": "{omni}/agent", "why": "moves Omni's settings (shell only)"}
+  ],
+
+  "legacy": [
+    {"path": "C:/omnibots",                "look_for": ["settings.toml", ".env", "db", "bots"], "why": "an old developer copy"},
+    {"path": "{localappdata}/OmniBots",    "look_for": ["settings.toml", ".env", "db", "bots", ".venv"], "why": "the old install location (only Qt's cache belongs there now)"},
+    {"path": "{roaming}/OmniBots",         "look_for": ["settings.toml", ".env", "db"], "why": "never used by OmniBots"},
+    {"path": "{userprofile}/.env",         "look_for": [], "why": "a loose .env in the user folder; keys belong in ~/.omni or OmniBots' store", "is_file": true}
+  ],
+
+  "providers": {
+    "_about": "At least one provider with a key, the default provider usable, no errors. Online test (optional): GET <baseUrl>/models with the key, 10 s timeout. Keys are never shown, only masked.",
+    "online_timeout_seconds": 10
+  }
+}

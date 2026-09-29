@@ -132,7 +132,13 @@ if (-not $NoBrowser) {
     if ($LASTEXITCODE -ne 0) { Say "The browser didn't install; the bots' browser tools will be off. Run: $vpy -m playwright install chromium" "Yellow" }
 }
 
-# 5. a Start menu shortcut
+# 5. the doctor: creates OmniBots' folders and settings, upgrades the database, and when Omni isn't
+#    installed, OmniBots' own provider config in ~/.omnibots\config (keys go in encrypted, via Settings -> Providers)
+Say "Checking the setup (doctor)"
+& $vpy -m omnibots.doctor
+if ($LASTEXITCODE -ne 0) { Say "The doctor found something to fix (see above). Run it again any time: $vpy -m omnibots.doctor" "Yellow" }
+
+# 6. a Start menu shortcut
 $version = (& $vpy -c "import omnibots; print(omnibots.__version__)" 2>$null)
 if (-not $NoShortcut) {
     $lnk = Join-Path ([Environment]::GetFolderPath("Programs")) "OmniBots.lnk"

@@ -1,4 +1,4 @@
-"""Read Omni's providers, keys, models, skills and MCP servers, read-only.
+"""Read Omni's providers, keys, models, skills and MCP servers.
 
 Providers and keys follow Omni's exact rules (src/core/config.mjs):
   - settings.json: whole-line // comments stripped, then JSON.
@@ -21,7 +21,8 @@ the MiniMax fold and output cap, known vision models). The parity test (tests/te
 anything OmniBots uses differs, which is how drift gets caught.
 
 Keys are held in memory only, registered with the log redactor, and shown
-masked. Nothing here writes to Omni.
+masked. This loader never writes. Settings → Providers writes provider
+entries through omnibots.omni.providers_store, and only those entries.
 """
 
 from __future__ import annotations
@@ -135,7 +136,7 @@ class ProviderInfo:
     name: str
     base_url: str
     api_key: str = field(default="", repr=False)
-    key_source: str = "none"            # settings | env | account:<name> | keyless | none
+    key_source: str = "none"            # settings | env | vault | account:<name> | keyless | none
     label: str = ""
     native_tools: bool = True
     reasoning_param: str | None = None
@@ -306,9 +307,9 @@ def _resolve_provider(name: str, p: dict[str, Any], env: dict[str, str]) -> Prov
     if api_key == "not-needed":
         info.key_source = "keyless"
     if not re.match(r"^https?://", info.base_url, re.I):
-        info.error = f"invalid baseUrl {info.base_url!r} (must start with http:// or https://); fix it in Omni"
+        info.error = f"invalid baseUrl {info.base_url!r} (must start with http:// or https://); fix it in Settings → Providers"
     elif accounts is not None and active and not str(accounts.get(active) or "").strip() and not api_key:
-        info.error = f"active account {active!r} has no key; set it in Omni (/apikey {active} <key>)"
+        info.error = f"active account {active!r} has no key; set it in Settings → Providers"
     if api_key and api_key not in KEYLESS:
         register_secret(api_key)
     for v in (accounts or {}).values():
@@ -412,17 +413,28 @@ def load_omni_config(loc: OmniLocation, *, real_env: dict[str, str] | None = Non
         saved = read_settings_json(loc.settings_file)
     except FileNotFoundError:
         saved = {}
-        errors.append(f"Omni settings not found at {loc.settings_file}. Run Omni once to create it.")
+        errors.append(f"OmniBots' provider settings are missing at {loc.settings_file}. Run the doctor to create them."
+                      if loc.standalone else f"Omni settings not found at {loc.settings_file}. Run Omni once to create it.")
     except ValueError as exc:
         saved = {}
         errors.append(f"Omni settings at {loc.settings_file} are not valid JSON ({exc}). Fix them in Omni; OmniBots will not guess.")
     settings = merge_with_defaults(saved, defaults)
     _migrate(settings, defaults)
 
+    from_store: set[str] = set()
+    if loc.keys_in_db:                  # standalone (A1.s.01): keys come from OmniBots' encrypted store
+        from omnibots.omni import keystore
+        try:
+            from_store = keystore.overlay(settings.get("providers") or {}, keystore.read_keys(loc.db_file))
+        except Exception as exc:        # a locked or damaged database must not stop the app
+            errors.append(f"could not read the stored provider keys ({type(exc).__name__}); run the doctor")
+
     providers = {}
     for name, p in (settings.get("providers") or {}).items():
         if isinstance(p, dict):
             info = _resolve_provider(name, p, env)
+            if name in from_store and info.key_source == "settings":
+                info.key_source = "vault"
             providers[name] = info
             if info.error:
                 errors.append(f"provider {name}: {info.error}")
