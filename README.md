@@ -23,8 +23,9 @@ irm https://raw.githubusercontent.com/tattooinmtl/Omnibots/master/install.ps1 | 
 ```
 
 It checks for Python 3.12+ and Git (offering to install them with winget), downloads OmniBots into
-`%LOCALAPPDATA%\OmniBots` with its own Python environment, installs the bots' browser, and adds **OmniBots** to the
-Start menu. Run the same line again to update. Options: `-InstallDir`, `-NoShortcut`, `-NoBrowser`, `-Yes`
+`%USERPROFILE%\.omnibots` (next to your bots' data, which git ignores, the same way Omni lives in `~\.omni`) with its
+own Python environment, installs the bots' browser, and adds **OmniBots** to the Start menu. The folder is a full git
+clone, so you can also work on OmniBots from it. Run the same line again to update. Options: `-InstallDir`, `-NoShortcut`, `-NoBrowser`, `-Yes`
 (see the top of `install.ps1`). The website: https://omnibots.globalwarningnetworks.com
 
 ## Run (from a clone)
