@@ -28,6 +28,7 @@ from omnibots.db import Database
 from omnibots.keepawake import KeepAwake
 from omnibots.lineup import TARGET_PROVIDERS
 from omnibots.omni import OmniConfig, OmniNotFound, load_omni_config, locate_omni
+from omnibots.omni.locate import resolve_location
 from omnibots.omni.watch import watch_omni
 from omnibots.providers.quota import QuotaManager
 from omnibots.providers.router import Router
@@ -94,6 +95,7 @@ class Engine:
         self.vault: Vault | None = None
         self.mcp = None                                       # MCPManager over Omni's mcpServers (A8.b.02)
         self.omni_install_root = omni_install_root
+        self.run_doctor_on_start = True                       # A16.d.01 (a test may turn it off)
         self.watch_interval = watch_interval
         self.omni: OmniConfig | None = None
         self.omni_error: str | None = None
@@ -178,6 +180,8 @@ class Engine:
         n = await self.vault.load()                        # every value registered for redaction (A9.c.01)
         log.info("vault: %d secret(s) indexed", n)
         self.budget = Budget.from_settings(self.db, self.budget_settings)
+        self._stage("Checking folders and config (doctor)", 0.20)
+        await self._startup_doctor()
         self._stage("Reading Omni's providers and skills", 0.25)
         await self._load_omni()
         self._stage("Cleaning up after the last session", 0.40)
@@ -253,6 +257,7 @@ class Engine:
         self.orchestrator.max_rounds = int(o.get("rounds_per_day", 8))
         self.orchestrator.leash = self.leash
         self.orchestrator.schedule = SimpleNamespace(routines=self.routines, triggers=self.triggers, night=self.night)
+        self.orchestrator.doctor = self.run_doctor                # A16.d.03: Omi's call_doctor tool
         self.live_fetch = fetch_page
         self.spawn(self._live_checks(float(o.get("live_check_minutes", 30))), name="live-checks")   # A15.f.01
         self.spawn(self._keep_desks_loop(), name="keep-desks")                                          # A15.f.04
@@ -314,13 +319,42 @@ class Engine:
                 started.append(r["pid"])
         return started
 
-    async def _load_omni(self) -> None:
+    async def _startup_doctor(self) -> None:
+        """A16.d.01: the quick, offline part of the doctor on every start: folders, settings.toml, and the
+        provider config (OmniBots' own when Omni isn't installed). It creates and repairs; it never deletes."""
+        if not self.run_doctor_on_start:
+            return
+        from omnibots.doctor import run_doctor
+        from omnibots.doctor.doctor import STARTUP_GROUPS
         try:
-            loc = locate_omni(self.omni_install_root)
-        except OmniNotFound as exc:
+            rep = await asyncio.to_thread(run_doctor, home=self.home, fix=True, groups=STARTUP_GROUPS,
+                                          omni_root=self.omni_install_root)
+        except Exception as exc:                  # the doctor must never stop the app from starting
+            log.warning("doctor at startup failed: %s", exc)
+            return
+        for f in rep.problems():
+            (log.warning if f.status in ("warn", "fail") else log.info)("doctor: %s %s", f.status, f.message)
+
+    async def run_doctor(self, *, fix: bool = True, online: bool = False) -> dict[str, Any]:
+        """The full doctor (Settings → Doctor, Omi's call_doctor). Re-reads the providers afterwards."""
+        from omnibots.doctor import run_doctor
+        rep = await asyncio.to_thread(run_doctor, home=self.home, fix=fix, online=online,
+                                      omni_root=self.omni_install_root)
+        if fix and any(f.status == "fixed" for f in rep.findings):
+            await self.reload_omni()
+        await self.db.audit("user", None, "doctor_run", json.dumps({"fix": fix, "online": online, **rep.counts()}))
+        return rep.to_dict()
+
+    async def _load_omni(self) -> None:
+        # Omni when it's installed; otherwise OmniBots' own Omni-shaped config with encrypted keys (A1.s.01).
+        try:
+            loc = await asyncio.to_thread(resolve_location, self.omni_install_root, self.home)
+        except (OmniNotFound, OSError) as exc:
             self.omni, self.omni_error = None, str(exc)
             log.error("%s", exc)
             return
+        if loc.standalone:
+            log.info("Omni is not installed: using OmniBots' own provider config in %s", loc.home)
         self.omni = await asyncio.to_thread(load_omni_config, loc)
         self.omni_error = None
         for err in self.omni.errors:
@@ -789,12 +823,23 @@ class Engine:
         await self.db.audit("system", None, "omni_config_reloaded", json.dumps({"providers": len(cfg.providers), "errors": len(cfg.errors)}))
         self.signals.omni_changed.emit(self.omni_summary())
 
+    async def reload_omni(self) -> dict[str, Any]:
+        """Re-read Omni's settings now. Settings → Providers calls this after a save.
+        The file watcher would notice the same change a few seconds later."""
+        if self.omni is None:
+            await self._load_omni()
+            return self.omni_summary()
+        cfg = await asyncio.to_thread(load_omni_config, self.omni.location)
+        await self._on_omni_changed(cfg)
+        return self.omni_summary()
+
     def omni_summary(self) -> dict[str, Any]:
         if self.omni is None:
             return {"ok": False, "error": self.omni_error or "Omni not loaded"}
         summary = self.omni.summary(TARGET_PROVIDERS)
         summary["ok"] = not summary["missing_providers"]
         summary["with_key"] = [n for n, p in summary["providers"].items() if self.omni.providers[n].has_key]
+        summary["standalone"] = self.omni.location.standalone      # A1.s.01: no Omni, OmniBots' own config
         return summary
 
     # ── talking to the engine ──────────────────────────────────────────

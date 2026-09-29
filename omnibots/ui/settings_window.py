@@ -1,5 +1,4 @@
-"""Settings (PLAN.md A11.a): Folders (where the bots' projects go, A11.m.01) and the "Bots & icons"
-legend the user asked for (2026-09-26): which badge means which job, and which extra Omi shows for which action."""
+"""Settings: Folders (A11.m.01), the Bots & icons legend (A11.d.05), Providers (A11.p.01) and Doctor (A16.d.02)."""
 
 from __future__ import annotations
 
@@ -12,6 +11,8 @@ from PySide6.QtWidgets import (
 from omnibots.ui import theme
 from omnibots.ui.omi_face import render_face
 from omnibots.ui.props import ACTIONS, JOBS, badge_image
+from omnibots.ui.doctor_page import DoctorPage
+from omnibots.ui.providers_page import ProvidersPage
 
 LEGEND_MOOD = {"coding": "working", "writing": "working", "running": "working", "reviewing": "working",
                "searching": "thinking", "thinking": "thinking", "waiting": "thinking", "deploying": "joy",
@@ -136,7 +137,7 @@ def folders_tab(engine=None, settings_path=None) -> QWidget:
 
 
 class SettingsWindow(QDialog):
-    def __init__(self, parent=None, engine=None, settings_path=None):
+    def __init__(self, parent=None, engine=None, settings_path=None, omni_settings=None):
         super().__init__(parent)
         self.setWindowTitle("OmniBots · Settings")
         self.setStyleSheet(theme.stylesheet() + f"""
@@ -145,6 +146,11 @@ class SettingsWindow(QDialog):
             QTabBar::tab {{ background: {theme.BG2}; border: 1px solid {theme.BORDER}; padding: 8px 18px;
                             border-top-left-radius: 10px; border-top-right-radius: 10px; margin-right: 4px; color: {theme.TEXT_DIM}; }}
             QTabBar::tab:selected {{ background: {theme.BG1}; color: {theme.TEXT}; border-bottom-color: {theme.BG1}; }}
+            QListWidget {{ background: {theme.BG2}; border: 1px solid {theme.BORDER}; border-radius: 12px; outline: 0; }}
+            QListWidget::item {{ padding: 8px 10px; border-radius: 8px; }}
+            QListWidget::item:selected {{ background: {theme.BG3}; color: {theme.TEXT}; }}
+            QComboBox {{ background: {theme.BG2}; border: 1px solid {theme.BORDER}; border-radius: 10px; padding: 6px 10px; }}
+            QComboBox QAbstractItemView {{ background: {theme.BG1}; color: {theme.TEXT}; selection-background-color: {theme.BG3}; }}
         """)
         self.resize(920, 820)
         v = QVBoxLayout(self)
@@ -153,5 +159,14 @@ class SettingsWindow(QDialog):
         self.folders = folders_tab(engine, settings_path)
         tabs.addTab(self.folders, "Folders")
         tabs.addTab(icons_legend(), "Bots && icons")          # "&&" = a literal & (a single & marks a shortcut)
+        self.providers = ProvidersPage(omni_settings, engine, autoload=omni_settings is not None)
+        tabs.addTab(self.providers, "Providers")
+        self.doctor = DoctorPage(engine, getattr(engine, "home", None))
+        tabs.addTab(self.doctor, "Doctor")
+        tabs.currentChanged.connect(self._tab_changed)
         v.addWidget(tabs)
         self.tabs = tabs
+
+    def _tab_changed(self, index: int) -> None:
+        if self.tabs.widget(index) is self.providers:
+            self.providers.ensure_loaded()

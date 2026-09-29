@@ -301,7 +301,7 @@ async def _emit(cb: TokenCallback | None, text: str) -> None:
 
 def _base_url(p: ProviderInfo) -> str:
     if not re.match(r"^https?://", p.base_url or "", re.I):
-        raise ProviderError(p.name, None, f'invalid baseUrl "{p.base_url}"; fix it in Omni', fatal=True)
+        raise ProviderError(p.name, None, f'invalid baseUrl "{p.base_url}"; fix it in Settings → Providers', fatal=True)
     return p.base_url.rstrip("/")
 
 
