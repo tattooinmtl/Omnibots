@@ -275,6 +275,13 @@ async def live_check(url: str, tries: int = 6, wait: float = 5) -> str:
                 if r.status_code < 400:
                     words = html_to_text(r.text)[:160].replace("\n", " ")
                     return f"{r.status_code} OK" + (f", title {title.group(1).strip()[:80]!r}" if title else "") + f"; starts: {words!r}"
+                if r.status_code == 401 and "app.netlify.com/edge-access" in r.text.replace("\\/", "/"):
+                    # found live (A10.99): the account protects new sites with a Netlify login; the deploy is fine,
+                    # visitors just can't see it. Redeploying doesn't help: it's a setting only the user changes.
+                    return ("PROTECTED: the deploy worked, but Netlify asks visitors to log in (the project is private). "
+                            "Don't redeploy: only the user can open it, in Netlify → this project → Project configuration → "
+                            "General → Visitor access → Project visibility → Public (for every new project: Team settings → "
+                            "Access & security → Visitor access → Default project visibility → Public).")
                 last = f"HTTP {r.status_code}"
             except Exception as exc:
                 last = f"{type(exc).__name__}: {exc}"

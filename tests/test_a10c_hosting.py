@@ -299,3 +299,27 @@ def test_check_domain_reads_dns_and_says_where_it_points(monkeypatch):
     assert "CNAME: my-todo.netlify.app" in good and "points at: netlify" in good and "expected my-todo.netlify.app: yes" in good
     assert "expected me.github.io: NO" in wrong
     assert "doesn't point anywhere" in bare and bad.startswith("ERROR")
+
+
+def test_a_private_netlify_project_is_named_as_such_not_as_down(monkeypatch):
+    """Found live (A10.99): the deploy worked, but the account made new projects private, so visitors got Netlify's
+    login redirect (401). The bot read "not answering" and redeployed; now it's told what it is and not to redeploy."""
+    import omnibots.runtime.web_tools as web_tools
+    login = ('<html><title>Login Redirect</title><script>var url = new URL('
+             "'https:\/\/app.netlify.com\/edge-access?domain=x.netlify.app');</script></html>")
+
+    def page(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text=login) if req.url.host == "x.netlify.app" else httpx.Response(401, text="no")
+    monkeypatch.setattr(hosting, "client_factory", lambda: httpx.AsyncClient(transport=httpx.MockTransport(page)))
+
+    async def public(url, allow_loopback=False):
+        return None
+    monkeypatch.setattr(web_tools, "assert_public_url", public)
+
+    async def no_sleep(_):
+        return None
+    monkeypatch.setattr(hosting, "sleep", no_sleep)
+    private = run(hosting.live_check("https://x.netlify.app"))
+    other = run(hosting.live_check("https://y.example.com", tries=2))
+    assert private.startswith("PROTECTED") and "Project visibility" in private and "Don't redeploy" in private
+    assert other.startswith("NOT answering yet (HTTP 401)")
