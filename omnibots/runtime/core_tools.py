@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from omnibots.security.untrusted import FILE, wrap
-from omnibots.runtime.sandbox import PY_FLAGS
+from omnibots.runtime.sandbox import PY_FLAGS, sandbox_python
 from omnibots.runtime.tools import Tool, ToolContext, ToolRegistry
 
 MAX_READ = 60_000
@@ -129,7 +129,7 @@ async def run_python(args: dict[str, Any], ctx: ToolContext) -> str:
     await ctx.event("terminal", f"$ python {shown}")
     # A15.e.04: the project folder is the working directory (relative paths like index.html work);
     # the run folder holding inline code is granted too
-    res = await ctx.sandbox.run([sys.executable, *PY_FLAGS, str(script)], cwd=ctx.workspace, timeout=timeout, grant=[run_dir],
+    res = await ctx.sandbox.run([sandbox_python(), *PY_FLAGS, str(script)], cwd=ctx.workspace, timeout=timeout, grant=[run_dir],
                                 on_output=lambda line: ctx.event("terminal", line))
     await ctx.event("terminal", f"[{'timed out' if res.timed_out else f'exit {res.exit_code}'} · {res.seconds:.1f}s]")
     ctx.record_run(f"python {shown}", res)

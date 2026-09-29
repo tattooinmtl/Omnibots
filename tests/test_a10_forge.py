@@ -117,3 +117,25 @@ def test_a_bot_forges_a_tool_via_create_tool_and_the_team_reuses_it(tmp_path):
     out, result, pool_names, called = run(go())
     assert out.status == "completed" and "passed tests + review" in result
     assert "to_roman" in pool_names and called == "XLIX"
+
+
+def test_forged_tool_tests_see_a_copy_of_the_code_not_the_folder_around_it(tmp_path):
+    """Found 2026-09-29: the forge granted the package's parent folder, which is ~/.omnibots itself once installed
+    there (database, logs, browser profiles). It now grants a copy of just the omnibots package."""
+    from pathlib import Path
+
+    import omnibots
+
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            forge = make_forge(e)
+            lib, again = forge.code_snapshot(), forge.code_snapshot()
+            await e["db"].close()
+            return forge, lib, again
+    forge, lib, again = run(go())
+    pkg = Path(omnibots.__file__).parent
+    assert lib == again and lib.is_relative_to(Path(forge.sandbox.root))
+    assert sorted(p.name for p in lib.iterdir()) == ["omnibots"]                   # nothing but the package
+    assert (lib / "omnibots" / "runtime" / "tools.py").read_bytes() == (pkg / "runtime" / "tools.py").read_bytes()
+    assert not any(p.suffix != ".py" for p in lib.rglob("*") if p.is_file())
