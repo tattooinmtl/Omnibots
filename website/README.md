@@ -27,4 +27,4 @@ Then open http://localhost:8765.
 
 ## Still to do
 
-- The Windows installer (`.exe`) and a one-line install command; the "Coming soon" card is their place.
+- The Windows installer (`.exe`); the "Coming soon" card is its place. (The one-line install command is live.)

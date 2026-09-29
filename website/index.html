@@ -26,7 +26,9 @@
       <nav class="nav" aria-label="Main">
         <a href="#screens">Screenshots</a>
         <a href="#features">Features</a>
+        <a href="#omni">Works with Omni</a>
         <a href="#install">Install</a>
+        <a href="https://omni.globalwarningnetworks.com" target="_blank" rel="noopener">Omni ↗</a>
         <a href="https://github.com/tattooinmtl/Omnibots" target="_blank" rel="noopener">GitHub</a>
       </nav>
     </div>
@@ -107,6 +109,33 @@
       </div>
     </section>
 
+    <section id="omni" class="wrap section">
+      <h2>Works with Omni</h2>
+      <p class="sub">OmniBots and <a href="https://omni.globalwarningnetworks.com" target="_blank" rel="noopener">Omni</a> work
+        together. Omni is the AI agent you talk to in your terminal, and it holds your AI provider keys and models. OmniBots
+        reads them from Omni, so Omi's team uses the same providers, and Omni starts OmniBots for you: type
+        <code>/omnibots</code> in Omni (<code>/omnibots status</code> and <code>/omnibots stop</code> too). Both live side
+        by side in your user folder, <code>~\.omni</code> and <code>~\.omnibots</code>.
+        <b>So install Omni first, then OmniBots.</b></p>
+      <div class="install">
+        <article class="card cmd">
+          <h3>1 · Install Omni first</h3>
+          <p class="need">In <b>PowerShell</b>, paste this and press Enter:</p>
+          <div class="code" data-copy>
+            <pre><code>irm https://omni.globalwarningnetworks.com/install.ps1 | iex</code></pre>
+            <button class="copy" type="button">Copy</button>
+          </div>
+          <p class="hint">Then add your AI provider key in Omni. Everything about Omni is on its site:
+            <a href="https://omni.globalwarningnetworks.com" target="_blank" rel="noopener">omni.globalwarningnetworks.com</a>.</p>
+        </article>
+        <article class="card">
+          <h3>2 · Then OmniBots</h3>
+          <p>Install OmniBots with the line <a href="#install">below</a>. Then start it from the Start menu, or type
+            <code>/omnibots</code> in Omni.</p>
+        </article>
+      </div>
+    </section>
+
     <section id="install" class="wrap section">
       <h2>Install</h2>
       <p class="sub">OmniBots is in active development. Install from the command line today; a one-click installer is coming.</p>
@@ -118,10 +147,12 @@
             <pre><code>irm https://raw.githubusercontent.com/tattooinmtl/Omnibots/master/install.ps1 | iex</code></pre>
             <button class="copy" type="button">Copy</button>
           </div>
-          <p class="hint">It checks for Python 3.12+ and Git (and offers to install them), downloads OmniBots into its own folder with
-            its own Python environment, and adds <b>OmniBots</b> to the Start menu. <b>Run the same line again to update</b>;
-            <b>About → Check for updates</b> tells you when there's a new version. You also need
-            <a href="https://github.com/tattooinmtl/Omnibots#readme" target="_blank" rel="noopener">Omni</a> for your AI provider keys.
+          <p class="hint">It checks for Python 3.12+ and Git (and offers to install them), downloads OmniBots into
+            <code>%USERPROFILE%\.omnibots</code> (next to Omni's <code>~\.omni</code>) with its own Python environment, and adds
+            <b>OmniBots</b> to the Start menu. <b>Run the same line again to update</b>;
+            <b>About → Check for updates</b> tells you when there's a new version. Install
+            <a href="https://omni.globalwarningnetworks.com" target="_blank" rel="noopener">Omni</a> first: it holds your AI
+            provider keys (<a href="#omni">why</a>).
             <a href="https://github.com/tattooinmtl/Omnibots/blob/master/install.ps1" target="_blank" rel="noopener">Read the script</a> first if you like.</p>
           <details class="manual">
             <summary>Or install by hand</summary>
