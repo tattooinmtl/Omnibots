@@ -244,6 +244,7 @@ class Engine:
                                          goal_seconds=float(o.get("goal_minutes", 30)) * 60,
                                          playbooks=self.playbooks)
         self.factory.risk_of = self._tool_risk
+        self.runner.review_chain = list(CHEAP_FIRST)                         # A16.e
         from omnibots.orchestrator.relay import RelayDesk
         self.runner.relay = RelayDesk(db=self.db, bus=self.bus, registry=self.registry, runner=self.runner, projects=self.projects,
                                       leash=self.leash, home=self.home, wait_seconds=float(o.get("tool_relay_minutes", 10)) * 60)
@@ -254,6 +255,7 @@ class Engine:
         self.orchestrator.schedule = SimpleNamespace(routines=self.routines, triggers=self.triggers, night=self.night)
         self.live_fetch = fetch_page
         self.spawn(self._live_checks(float(o.get("live_check_minutes", 30))), name="live-checks")   # A15.f.01
+        self.spawn(self._keep_desks_loop(), name="keep-desks")                                          # A15.f.04
         self.team = TeamController(db=self.db, bus=self.bus, runner=self.runner, graph=self.graph, orchestrator=self.orchestrator,
                                    approvals=self.approvals, seats=self.seats, stall_after=float(o.get("stall_minutes", 5)) * 60)
         self.spawn(self.team.monitor(), name="stall-monitor")
@@ -606,6 +608,41 @@ class Engine:
         await self.registry.update(bot_id, risk_ceiling=ceiling)
         await self.db.audit("user", None, "risk_ceiling_set", json.dumps({"bot": bot_id, "ceiling": ceiling}))
         return ceiling
+
+    async def keep_desks(self) -> list[str]:
+        """A15.f.04: a bot's VPS computer stays up while its project is open, on Fix, and the bot has background
+        tokens left today. The gateway stops a computer after IDLE_MIN idle minutes and any request from the
+        bot counts as use, so a status check keeps a RUNNING one up (it never starts one, and a bot with no
+        computer login is skipped: the check must not create one). No server change needed."""
+        if self.leash.paused or getattr(self, "computers", None) is None:
+            return []
+        rows = await self.db.read(
+            "SELECT DISTINCT j.project_id AS pid, j.assigned_bot_id AS bot FROM jobs j JOIN projects p ON p.id = j.project_id "
+            "WHERE p.status != 'cancelled' AND p.autonomy = 'fix' AND j.assigned_bot_id IS NOT NULL AND j.assigned_bot_id != ?",
+            (BOSS_ID,))
+        kept = []
+        for r in rows:
+            bot = r["bot"]
+            if bot in kept or not self.computers.secret_for(bot):
+                continue
+            cap = await self.budget.allocation_today(r["pid"], bot)
+            if cap and await self.budget.background_used_today(r["pid"], bot) >= cap:
+                continue                                   # out of background tokens today: let it idle out
+            try:
+                resp = await self.computers.call(bot, "GET", "/computer")
+                if resp.status_code == 200 and resp.json().get("running"):
+                    kept.append(bot)
+            except Exception as exc:
+                log.info("keeping %s's computer up failed: %s", bot, exc)
+        return kept
+
+    async def _keep_desks_loop(self, every: float = 300.0) -> None:
+        while True:
+            await asyncio.sleep(every)
+            try:
+                await self.keep_desks()
+            except Exception:
+                log.exception("keep_desks pass failed")
 
     async def remove_routine(self, routine_id: str) -> str:
         await self.db.write("DELETE FROM routines WHERE id=?", (routine_id,))

@@ -49,6 +49,7 @@ The board is read for you on a short cycle after this job, including a new assig
 If the user sends a note while you work, follow it: it corrects your course."""
 
 
+BOSS_REVIEWER = "omi:review"                # A16.e: whose tokens Omi's review of a token ask counts under
 LOOP_WARN, LOOP_STOP = 3, 5
 LOOP_EXEMPT = {"wait_for_mention"}                       # waiting again is not a loop
 LOOP_NOTE = ("[system note] You made the exact same tool call with the exact same result 3 times in a row. Repeating it "
@@ -80,6 +81,7 @@ class TurnResult:
     tool_calls: int = 0
     error: str | None = None
     models_used: list[str] = field(default_factory=list)
+    runs: list[dict[str, Any]] = field(default_factory=list)   # commands really run (ToolContext.runs), set by the runner
 
 
 class BotAgent:
@@ -87,11 +89,12 @@ class BotAgent:
                  tools: ToolRegistry, approvals: ApprovalCenter, events: BotEvents, sandbox: Sandbox | None = None,
                  system_prompt: str | None = None, max_iterations: int = 40, priority: str = "work",
                  approval_timeout: float | None = None, seat_lease: bool | None = None, token_budget: int | None = None,
-                 budget=None, risk_ceiling: str | None = None, summary_prefix: str = ""):
+                 budget=None, risk_ceiling: str | None = None, summary_prefix: str = "", review_chain: list[str] | None = None):
         self.bot_id, self.name, self.role = bot_id, name, role
         self.budget = budget                     # A9.c.02: security.budget.Budget (daily token caps, spend caps)
         self.risk_ceiling = risk_ceiling         # A8.d.03: a tool whose base risk is above it is refused
         self.summary_prefix = summary_prefix     # A8.d.02: "requested by X, run by Y: " on a relay job's lines and cards
+        self.review_chain = review_chain         # A16.e: Omi looks at a token ask first (cheap lane); None = no review
         self.workspace = workspace
         workspace.mkdir(parents=True, exist_ok=True)
         self.router, self.chain = router, chain
@@ -178,6 +181,7 @@ class BotAgent:
         registry = build_param_registry(schemas)
         ctx = ToolContext(bot_id=self.bot_id, workspace=self.workspace, job_id=job_id, emit=ev.emit, sandbox=self.sandbox,
                           waiting_on_user=self.waiting_on_user)
+        self.last_runs = ctx.runs
         recoveries, nudged, total_calls, models = 0, False, 0, []
         last_step, repeats = None, 0                     # stuck-loop guard (A3.a.10)
         await ev.emit("console", f"▶ task: {task}")
@@ -307,6 +311,15 @@ class BotAgent:
         pid, used, cap = over["project_id"], over["used"], over["cap"]
         await ev.emit("console", f"■ my background tokens for today are used up ({used:,}/{cap:,}); asking Omi for more")
         est, why = await self._estimate_tokens_left(msgs, job_id)
+        verdict, note = await self._omi_review(msgs, est, why, job_id) if self.review_chain else ("", "")
+        if verdict == "no":                                    # A16.e: Omi turns it down itself; only the user can say yes
+            await ev.emit("console", f"✖ Omi turned down my request for more tokens: {note}")
+            if self.budget.bus:
+                await self.budget.bus.publish(
+                    topic_project(pid), "PROGRESS_UPDATE",
+                    {"text": f"Omi turned down {self.name}'s request for {est:,} more tokens: {note} {self.name} stops and reports."},
+                    sender_type="bot", sender_id=BOSS_ID, project_id=pid, job_id=job_id)
+            return False
         if self.budget.bus:
             await self.budget.bus.publish(
                 topic_project(pid), "HELP_REQUEST",
@@ -314,7 +327,8 @@ class BotAgent:
                  "kind": MORE_TOKENS, "tokens": est},
                 sender_type="bot", sender_id=self.bot_id, recipient_id=BOSS_ID, project_id=pid, job_id=job_id)
         summary = (f"{self.name} used its {cap:,} background tokens for today on this project and needs about {est:,} more "
-                   f"to finish: {why} Approve to allocate {est:,} more tokens to {self.name} for today.")
+                   f"to finish: {why} Approve to allocate {est:,} more tokens to {self.name} for today."
+                   + (f" Omi's view: {note}" if note else ""))
         await ev.set_state("waiting_approval", "more tokens (asked Omi)")
         with self.waiting_on_user():
             decision = await self.approvals.request(
@@ -328,6 +342,32 @@ class BotAgent:
             await self.budget.allocate(pid, self.bot_id, est + max(0, used - cap))
         await ev.emit("console", f"✔ more tokens allocated (today: {await self.budget.allocation_today(pid, self.bot_id):,})")
         return True
+
+    async def _omi_review(self, msgs, est: int, why: str, job_id) -> tuple[str, str]:
+        """A16.e: one short look by Omi (cheap lane) at the bot's recent steps: ("fair" | "no", one sentence).
+        Anything that goes wrong here lets the ask through without an opinion; it never blocks it."""
+        steps = []
+        for m in msgs[-16:]:
+            if m.get("role") == "assistant":
+                for c in m.get("tool_calls") or []:
+                    fn = c.get("function") or {}
+                    steps.append(f"called {fn.get('name')}({str(fn.get('arguments') or '')[:100]})")
+            elif m.get("role") == "tool":
+                steps.append("→ " + " ".join(str(m.get("content") or "").split())[:160])
+        prompt = ("You are Omi, the boss of a team of bots. A worker ran out of today's tokens for background work and asks "
+                  f"for about {est:,} more to finish. Its reason: {why}\nIts last steps:\n" + "\n".join(steps[-14:]) +
+                  "\n\nIs it making real progress (fair), or is it looping, stuck on the same failure, or off-task (no)? "
+                  'Reply with ONLY JSON: {"verdict": "fair" or "no", "note": "<one short sentence the user will read>"}')
+        try:
+            routed = await self.router.chat(f"{BOSS_REVIEWER}", list(self.review_chain), [{"role": "user", "content": prompt}], None,
+                                            job_id=job_id, priority="review")
+            raw = routed.result.answer or ""
+            data = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
+            verdict = "no" if str(data.get("verdict", "")).strip().lower().startswith("no") else "fair"
+            return verdict, " ".join(str(data.get("note") or "").split())[:200]
+        except Exception as exc:
+            log.info("Omi's review of %s's token ask failed: %s", self.bot_id, exc)
+            return "", ""
 
     async def _estimate_tokens_left(self, msgs, job_id) -> tuple[int, str]:
         """One short, tool-less call: the bot's own guess of the tokens it still needs. Falls back to

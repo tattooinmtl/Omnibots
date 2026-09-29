@@ -17,6 +17,7 @@ from typing import Any
 
 from omnibots.board.a2a import Inbox
 from omnibots.board.query import query
+from omnibots.lineup import MINIMAX_FIRST
 from omnibots.board.types import topic_project
 from omnibots.bots.profile import BOSS_ID
 from omnibots.lineup import CHEAP_FIRST
@@ -95,6 +96,8 @@ class Orchestrator:
                 await asyncio.wait(live, timeout=self.grace_seconds)
             await self._stop_leftover_workers(ctx)
         await self._resumable_if_out_of_time(pid, boss_job.id, goal)
+        if out.status == "completed":
+            await self._review_if_skipped(pid, ctx)
         report = await self.write_report(pid, out)
         await self.projects.set_status(pid, "done" if out.status == "completed" else "failed" if out.status == "failed" else "open")
         if out.status == "completed":
@@ -124,6 +127,37 @@ class Orchestrator:
                                         f"({todo}). Press ▶ Start in the tray to continue where I stopped."},
                                sender_type="bot", sender_id=BOSS_ID, recipient_id="user", project_id=pid)
         return True
+
+    async def _review_if_skipped(self, pid: str, ctx) -> str | None:
+        """A15.a.07 (user, 2026-09-28: "omi can skip trivial one"): a goal that produced more than two files gets
+        its review even when Omi skipped review_work (found live in A14.a.02: a 4-file app went unreviewed).
+        A FAIL in the app starts a round to fix what the review found."""
+        from omnibots.runtime.review import review
+        if await query(self.db, project=pid, types=["REVIEW_RESULT"]):
+            return None                                    # Omi reviewed it
+        folder = self.projects.folder(pid)
+        files = [p for p in folder.rglob("*") if p.is_file() and ".git" not in p.parts and "__pycache__" not in p.parts
+                 and p.name not in ("GOAL.md", "REPORT.md")] if folder.is_dir() else []
+        if len(files) <= 2:
+            return None                                    # trivial: Omi may skip it
+        # found live in A14.a.02: Omi had deleted a risky script but not committed yet; the review saw it and FAILed
+        await self.projects.commit(pid, "work before review", author=BOSS_ID)
+        diff = await self.projects.diff(pid)
+        if not diff.strip():
+            return None
+        try:
+            r = await review(self.router, reviewer_id="reviewer", chain=list(self.planner_chain or MINIMAX_FIRST),
+                             task=ctx.goal, changes=diff[:40000])
+        except Exception as exc:
+            log.warning("automatic review of %s failed: %s", pid, exc)
+            return None
+        await self.bus.publish(topic_project(pid), "REVIEW_RESULT",
+                               {"text": f"VERDICT {r.verdict} (automatic: Omi skipped the review)\n" + "\n".join(r.findings)},
+                               sender_type="bot", sender_id="reviewer", recipient_id=BOSS_ID, project_id=pid)
+        if r.verdict != "PASS" and self.keep_working:
+            self.schedule_continue(pid, "The automatic review found problems. Fix them: " + "; ".join(r.findings)[:800],
+                                   after=asyncio.current_task())
+        return r.verdict
 
     # ── rounds (A15.d) ─────────────────────────────────────────────────
     def rounds_left(self, pid: str) -> int:

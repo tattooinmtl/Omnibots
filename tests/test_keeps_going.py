@@ -150,3 +150,95 @@ def test_a_result_between_rounds_starts_a_round_for_omi(tmp_path):
             return asked
     asked = run(go())
     assert len(asked) == 1 and asked[0][0] == "p1" and "bot_x sent a claim submitted" in asked[0][1]
+
+
+def test_a_job_carried_on_unblocks_what_depends_on_it(tmp_path):
+    """Found by the A14.a.01 live run: the runner marks a job that hit its step limit `blocked`, which blocked its
+    dependents; carrying it on must put them back in line, or the report job never runs."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            g = e["graph"]
+            bot = await e["reg"].create("Researcher", "researcher", chain=["work/m"])
+            pid = await e["projects"].create("a report")
+            research = await g.add_job(pid, "research", assigned_bot_id=bot.id)
+            report = await g.add_job(pid, "write the report", depends_on=[research.id])
+            await e["db"].write("UPDATE jobs SET status='blocked', error_message='step budget used up' WHERE id=?", (research.id,))
+            await g.refresh(pid)
+            before = (await g.get(report.id)).status
+            await g.continue_or_record(research.id, at_step_limit("half the facts found"))
+            after = (await g.get(report.id)).status
+            await e["db"].close()
+            return before, after
+    before, after = run(go())
+    assert before == "blocked" and after == "pending"
+
+
+def test_a_bigger_goal_gets_its_review_even_when_omi_skipped_it(tmp_path):
+    """A15.a.07 backed by code: found live in A14.a.02, a 4-file app went unreviewed. A trivial goal may skip it."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            orch = e["orch"]
+            orch.planner_chain = ["plan/m"]
+            mock.script("plan", sse("VERDICT: PASS\nfindings: none"))
+            big = await e["projects"].create("a to-do app")
+            for name in ("app.py", "index.html", "test_app.py", "README.md"):
+                (e["projects"].folder(big) / name).write_text(f"# {name}\n", encoding="utf-8")
+            await e["projects"].commit(big, "the team's work", author="bot")      # jobs commit their work, as in the app
+            small = await e["projects"].create("one note")
+            (e["projects"].folder(small) / "note.md").write_text("hi\n", encoding="utf-8")
+            ctx = SimpleNamespace(goal="a to-do app")
+            v_big = await orch._review_if_skipped(big, ctx)
+            v_again = await orch._review_if_skipped(big, ctx)          # reviewed now: not twice
+            v_small = await orch._review_if_skipped(small, SimpleNamespace(goal="one note"))
+            reviews = [m.text() for m in await query(e["db"], project=big, types=["REVIEW_RESULT"])]
+            await e["db"].close()
+            return v_big, v_again, v_small, reviews
+    v_big, v_again, v_small, reviews = run(go())
+    assert v_big == "PASS" and v_again is None and v_small is None
+    assert len(reviews) == 1 and "automatic: Omi skipped the review" in reviews[0]
+
+
+def test_the_automatic_review_sees_uncommitted_work(tmp_path):
+    """Found live in A14.a.02: Omi deleted a risky helper script without committing, the review diffed HEAD and
+    FAILed on a file that was already gone."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            orch = e["orch"]
+            orch.planner_chain = ["plan/m"]
+            mock.script("plan", sse("VERDICT: PASS\nfindings: none"))
+            pid = await e["projects"].create("a to-do app")
+            folder = e["projects"].folder(pid)
+            for name in ("app.py", "index.html", "test_app.py", "_danger.py"):
+                (folder / name).write_text(f"# {name}\n", encoding="utf-8")
+            await e["projects"].commit(pid, "the team's work", author="bot")
+            (folder / "_danger.py").unlink()                               # Omi's clean-up, not committed yet
+            (folder / "README.md").write_text("# readme\n", encoding="utf-8")
+            await orch._review_if_skipped(pid, SimpleNamespace(goal="a to-do app"))
+            sent = mock.requests[-1]["body"]["messages"][-1]["content"]
+            await e["db"].close()
+            return sent
+    sent = run(go())
+    assert "README.md" in sent                                             # the reviewer saw the latest tree
+    assert "+# _danger.py" not in sent                                     # not the deleted file as if it were there
+
+
+def test_build_junk_stays_out_of_the_project_history(tmp_path):
+    """Found live in A14.a.02: __pycache__/*.pyc was committed with the bots' work."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            pid = await e["projects"].create("a to-do app")
+            folder = e["projects"].folder(pid)
+            (folder / "__pycache__").mkdir()
+            (folder / "__pycache__" / "app.cpython-312.pyc").write_bytes(b"junk")
+            (folder / "app.py").write_text("print(1)\n", encoding="utf-8")
+            await e["projects"].commit(pid, "the team's work", author="bot")
+            diff = await e["projects"].diff(pid)
+            await e["db"].close()
+            return diff, sorted(p.name for p in folder.iterdir())
+    diff, names = run(go())
+    assert "app.py" in diff and ".pyc" not in diff
+    assert ".gitignore" not in names                                     # nothing written into the user's folder

@@ -29,6 +29,25 @@ _KEEP = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "N
          "PROCESSOR_ARCHITECTURE", "OS", "LANG", "PYTHONIOENCODING", "USERNAME"}
 
 
+# Python flags for sandboxed runs: -I without -E. The environment is already an allowlist (scrubbed_env), and -E
+# would drop the PYTHONPATH that loads the sandbox's sitecustomize below.
+PY_FLAGS = ["-s", "-P"]
+
+# Found live in A14.a.02: in the AppContainer, tempfile.mkdtemp()/TemporaryDirectory() failed with "Access is
+# denied". Python 3.12 on Windows turns mkdir(mode=0o700) into an owner-only ACL, which locks the container out of
+# the folder it just made. A normal mkdir inherits the granted folder's access instead.
+SITECUSTOMIZE = """\
+import os
+if os.name == "nt" and os.environ.get("OMNIBOTS_SANDBOX", "").endswith("AppContainer"):
+    _mkdir = os.mkdir
+
+    def _sandbox_mkdir(path, mode=0o777, *, dir_fd=None):
+        return _mkdir(path, 0o777 if mode == 0o700 else mode, dir_fd=dir_fd)
+
+    os.mkdir = _sandbox_mkdir
+"""
+
+
 def scrubbed_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items()
            if k.upper() in _KEEP and not _SECRET_NAME.search(k)}
@@ -134,9 +153,11 @@ class Sandbox:
             await asyncio.to_thread(ac.grant, folder, write=False)
         tmp = cwd / ".tmp"
         tmp.mkdir(exist_ok=True)
+        shim = self._python_shim()
+        await asyncio.to_thread(ac.grant, shim, write=False)
         # LOCALAPPDATA: Windows builds the container's own data folder from it (CreateProcess fails
         # with error 203 without it). It's only a path; the container still can't read the user's files.
-        env = scrubbed_env({"TEMP": str(tmp), "TMP": str(tmp), "OMNIBOTS_SANDBOX": "S0+AppContainer",
+        env = scrubbed_env({"TEMP": str(tmp), "TMP": str(tmp), "OMNIBOTS_SANDBOX": "S0+AppContainer", "PYTHONPATH": str(shim),
                             "LOCALAPPDATA": os.environ.get("LOCALAPPDATA", "")})
         if isinstance(argv, str):
             cmdline = f'{env.get("COMSPEC", "cmd.exe")} /d /c "{argv}"'
@@ -190,6 +211,14 @@ class Sandbox:
                 pumping.cancel()
             proc.close()
         return RunResult(code, "".join(chunks), timed_out, time.perf_counter() - t0, cwd, level="S0+AppContainer")
+
+    def _python_shim(self) -> Path:
+        shim = self.root / "_python"
+        shim.mkdir(parents=True, exist_ok=True)
+        f = shim / "sitecustomize.py"
+        if not f.is_file() or f.read_text(encoding="utf-8") != SITECUSTOMIZE:
+            f.write_text(SITECUSTOMIZE, encoding="utf-8")
+        return shim
 
     @staticmethod
     async def _kill_tree(proc: asyncio.subprocess.Process) -> None:

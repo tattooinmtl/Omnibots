@@ -71,13 +71,14 @@ class Tray(QObject):
 
     def __init__(self, engine, live, *, confirm: Callable[[str, str], bool] | None = None,
                  open_settings: Callable[[], None] | None = None, quit_app: Callable[[], None] | None = None,
-                 restart_app: Callable[[], None] | None = None, home: Path | None = None):
+                 restart_app: Callable[[], None] | None = None, home: Path | None = None,
+                 update_app: Callable[[], None] | None = None):
         super().__init__()
         self.engine, self.live = engine, live
         self.confirm = confirm or self._ask
         self.open_settings = open_settings or self._settings
         self.quit_app = quit_app or self._exit
-        self.restart_app, self.home = restart_app, home
+        self.restart_app, self.home, self.update_app = restart_app, home, update_app
         self.snapshot: dict[str, Any] = {}
         self._faces: dict[tuple[str, str], QIcon] = {}
         self._icon_key: tuple | None = None
@@ -425,7 +426,7 @@ class Tray(QObject):
 
     def about(self) -> None:
         from omnibots.ui.about import open_about
-        self._about_win = open_about()
+        self._about_win = open_about(update=self.update_app)
 
     def _settings(self) -> None:
         from omnibots.ui.settings_window import SettingsWindow

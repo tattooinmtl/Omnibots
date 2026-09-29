@@ -115,3 +115,99 @@ def test_a_bot_above_its_ceiling_is_refused_and_existing_bots_keep_their_tools(t
     out, refused, raised, after, old = run(go())
     assert out.status == "completed" and refused.startswith("REFUSED: web_search is R2, above your limit (R1)")
     assert after == "R3" and any(old.id in r for r in raised)                      # git_push is R3: kept usable
+
+
+def test_omis_inbox_hears_a_tool_request(tmp_path):
+    """Found live in A14.a.02: TOOL_REQUEST wasn't among the inbox types, so Omi waiting in wait_for_mention never
+    saw it and the asking bot timed out."""
+    from omnibots.board.a2a import Inbox
+
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            desk = RelayDesk(db=e["db"], bus=e["bus"], registry=e["reg"], runner=e["runner"], wait_seconds=5)
+            asker = await e["reg"].create("Tester", "tester", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            inbox = await Inbox.open(e["bus"], BOSS_ID)
+            ask = asyncio.create_task(desk.request(bot_id=asker.id, job_id="j1", project_id="p1", tool="run_shell",
+                                                   args={"command": "python -m unittest"}, why="run the tests"))
+            heard = await inbox.sub.get(timeout=3)
+            await desk.decline(desk.waiting()[0]["id"], "test over")
+            await ask
+            inbox.close()
+            await e["db"].close()
+            return heard
+    heard = run(go())
+    assert heard is not None and heard.message_type == "TOOL_REQUEST" and "run_shell" in heard.text()
+
+
+def test_omi_can_see_the_request_id_and_a_wrong_id_names_the_open_ones(tmp_path):
+    """Found live in A14.a.02: the TOOL_REQUEST text had no id, so Omi answered 'the tool request above' and the asking
+    bot waited 10 minutes for nothing."""
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            desk = RelayDesk(db=e["db"], bus=e["bus"], registry=e["reg"], runner=e["runner"], wait_seconds=5)
+            asker = await e["reg"].create("Tester", "tester", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            ask = asyncio.create_task(desk.request(bot_id=asker.id, job_id="j1", project_id=None, tool="run_shell",
+                                                   args={"command": "ver"}, why="check the OS"))
+            for _ in range(100):
+                await asyncio.sleep(0.01)
+                if desk.waiting():
+                    break
+            rid = desk.waiting()[0]["id"]
+            text = [m.text() for m in await query(e["db"], types=["TOOL_REQUEST"])][0]
+            wrong = await desk.answer("the tool request above", "Microsoft Windows")
+            right = await desk.answer(rid, "Microsoft Windows")
+            got = await ask
+            none_open = await desk.answer("tr_gone", "x")
+            await e["db"].close()
+            return rid, text, wrong, right, got, none_open
+    rid, text, wrong, right, got, none_open = run(go())
+    assert rid in text
+    assert wrong.startswith("ERROR") and rid in wrong and "run_shell" in wrong
+    assert right == f"answered {rid}" and "Microsoft Windows" in got
+    assert "None are open" in none_open
+
+
+def test_a_relayed_run_counts_as_evidence_but_a_typed_answer_does_not(tmp_path):
+    """Found live in A14.a.06: the tests bot's tests were run through the relay, then its claim was rejected twice
+    ("you did not run it in this job") and the job blocked."""
+    from omnibots.board.ledger import EvidenceError, check_evidence
+
+    async def go():
+        with MockProviders() as mock:
+            e = await build(tmp_path, mock)
+            desk = RelayDesk(db=e["db"], bus=e["bus"], registry=e["reg"], runner=e["runner"], projects=e["projects"], home=tmp_path)
+            asker = await e["reg"].create("Tester", "tester", chain=["work/m"], tools=list(DEFAULT_TOOLS))
+            holder = await e["reg"].create("Shell", "devops", chain=["plan/m"], tools=[*DEFAULT_TOOLS, "run_shell"], risk_ceiling="R3")
+            pid = await e["projects"].create("a site")
+            mock.script("plan", sse("", tool_calls=[call("run_shell", command="echo relayed-ok")]), sse("It printed relayed-ok."))
+            relayed_runs, typed_runs = [], []
+            ask = asyncio.create_task(desk.request(bot_id=asker.id, job_id="j1", project_id=pid, tool="run_shell",
+                                                   args={"command": "echo relayed-ok"}, why="evidence", record=relayed_runs.append))
+            for _ in range(300):
+                await asyncio.sleep(0.02)
+                if desk.waiting(pid):
+                    break
+            await desk.relay(desk.waiting(pid)[0]["id"], holder.id)
+            await asyncio.wait_for(ask, 60)
+            ask2 = asyncio.create_task(desk.request(bot_id=asker.id, job_id="j2", project_id=pid, tool="run_shell",
+                                                    args={"command": "echo typed"}, why="evidence", record=typed_runs.append))
+            for _ in range(300):
+                await asyncio.sleep(0.02)
+                if desk.waiting(pid):
+                    break
+            await desk.answer(desk.waiting(pid)[0]["id"], "EXIT 0\ntyped")          # Omi's word, not a run
+            await ask2
+            await e["db"].close()
+            return relayed_runs, typed_runs, holder
+    relayed, typed, holder = run(go())
+    assert relayed and relayed[0]["relayed_by"] == holder.id and relayed[0]["exit_code"] == 0 and "relayed-ok" in relayed[0]["output"]
+    (ok,) = check_evidence([{"kind": "test", "ref": "echo relayed-ok", "exit_code": 0}], None, relayed)
+    assert ok["detail"]["verified"] is True
+    assert typed == []
+    try:
+        check_evidence([{"kind": "test", "ref": "echo typed", "exit_code": 0}], None, typed)
+        raise AssertionError("a typed answer must not count as a run")
+    except EvidenceError:
+        pass

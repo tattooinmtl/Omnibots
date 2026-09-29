@@ -255,8 +255,10 @@ class TaskGraph:
                 progress = (getattr(res, "answer", "") or "").strip()[-1500:] or "(no summary)"
                 desc = (f"{j.description or j.title}\n\n[Round {rounds} ended at the step limit. Where it got to:]\n{progress}\n"
                         "Carry on from there; don't redo the finished parts.")
-                await self.db.write("UPDATE jobs SET status='assigned', budget_json=?, description=? WHERE id=?",
+                await self.db.write("UPDATE jobs SET status='assigned', budget_json=?, description=?, error_message=NULL WHERE id=?",
                                     (json.dumps(budget), desc, job_id))
+                # the runner had already marked it blocked, which blocked its dependents too: back in line (found by A14.a.01)
+                await self.refresh(j.project_id)
                 if self.bus:
                     await self.bus.publish(topic_job(job_id), "PROGRESS_UPDATE",
                                            {"text": f"'{j.title}' hit its step limit; carrying on in round {rounds + 1}"},
