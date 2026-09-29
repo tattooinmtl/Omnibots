@@ -145,3 +145,23 @@ def test_plain_s0_fallback_still_works(tmp_path):
     (tmp_path / "ws").mkdir()
     r = run(s.run('python -c "print(1)"', cwd=tmp_path / "ws", timeout=30))
     assert r.exit_code == 0 and "sandbox S0," in r.as_tool_result()
+
+
+def test_run_python_works_when_the_app_runs_from_a_venv_in_the_user_folder(sb, tmp_path, monkeypatch):
+    """Found live 2026-09-29: the installer puts OmniBots and its .venv in ~/.omnibots; the container can't read a
+    venv's pyvenv.cfg there, so every run_python failed with "No pyvenv.cfg file". Sandboxed code runs on the base
+    Python instead."""
+    import subprocess
+
+    from omnibots.runtime.core_tools import core_registry
+    from omnibots.runtime.tools import ToolContext
+    base = getattr(sys, "_base_executable", sys.executable)
+    venv = tmp_path / "home" / ".venv"                                    # %TEMP% is in the user profile, like ~/.omnibots
+    subprocess.run([base, "-m", "venv", "--without-pip", str(venv)], check=True, timeout=120)
+    monkeypatch.setattr(sys, "executable", str(venv / "Scripts" / "python.exe"))
+    monkeypatch.setattr(sys, "_base_executable", base, raising=False)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    ctx = ToolContext(bot_id="bot_t", workspace=ws, sandbox=sb)
+    out = run(core_registry().run("run_python", {"code": "print('venv-home ok', 6 * 7)"}, ctx))
+    assert "venv-home ok 42" in out and "pyvenv.cfg" not in out, out

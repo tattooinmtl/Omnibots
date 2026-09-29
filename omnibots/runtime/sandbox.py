@@ -33,6 +33,15 @@ _KEEP = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "N
 # would drop the PYTHONPATH that loads the sandbox's sitecustomize below.
 PY_FLAGS = ["-s", "-P"]
 
+
+def sandbox_python() -> str:
+    """The interpreter for sandboxed runs: the base Python, never a venv's launcher. Found live 2026-09-29 once the
+    installer put OmniBots (and its .venv) in ~/.omnibots: the AppContainer can't read a venv's pyvenv.cfg in the user
+    folder, so every run_python failed with "No pyvenv.cfg file". The base Python (Program Files) is what sandboxed
+    code always ran on before, with the same packages."""
+    base = getattr(sys, "_base_executable", "") or ""
+    return base if base and Path(base).is_file() else sys.executable
+
 # Found live in A14.a.02: in the AppContainer, tempfile.mkdtemp()/TemporaryDirectory() failed with "Access is
 # denied". Python 3.12 on Windows turns mkdir(mode=0o700) into an owner-only ACL, which locks the container out of
 # the folder it just made. A normal mkdir inherits the granted folder's access instead.

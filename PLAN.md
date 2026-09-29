@@ -1176,6 +1176,10 @@ _(empty)_
 - **A16.f.02** ✅ **A stop during the first-run window or the splash was lost** (found by A16.f.01's test: `app.quit` does nothing before `app.exec` runs). `app.py`: a stop now closes the modal window, startup exits without saving a folder the user never chose, and a stop during the splash quits as soon as the loop runs.
 
 **Notes:**
+- 2026-09-29 Claude: two sandbox bugs the move to `~/.omnibots` exposed (found in the review the user asked for), fixed
+  - `run_python` from the installed app failed in the AppContainer: "No pyvenv.cfg file" (the container can't read a venv's config in the user folder; the same was true of the old `%LOCALAPPDATA%\OmniBots` install, never exercised). Sandboxed code now runs on the base Python (`sandbox_python()`: `sys._base_executable`), as it always did from the clone. Files: `runtime/sandbox.py`, `runtime/core_tools.py`, `orchestrator/boss_tools.py`.
+  - Security: the Tool Forge granted the sandbox read access to the omnibots package's PARENT folder, which is `~/.omnibots` itself now (database, logs, browser profiles with cookies). Checked: the grant had never been applied there (`icacls` showed no container entry). The forge now grants a copy of just the package's .py files (`ToolForge.code_snapshot()`, in `sandbox/_lib/<hash>`, one per code version) and runs `sandbox_python()` instead of whatever `python` is first on PATH. File: `orchestrator/forge.py`.
+  - Tests: `test_run_python_works_when_the_app_runs_from_a_venv_in_the_user_folder` (a real venv in the user profile; without the fix it fails with "No pyvenv.cfg file"), `test_forged_tool_tests_see_a_copy_of_the_code_not_the_folder_around_it`; `tests/test_a9_sandbox.py` + `tests/test_a10_forge.py` → 16 passed.
 - 2026-09-29 Claude: A16.f.03 (install into `~/.omnibots`)
   - Archived first, nothing deleted: `C:\Users\ThePa\omnibots_archive_2026-09-29\` holds `C-omnibots_repo_with_keys.zip` (1125 files, keys included, the user's own copy), `AppData-Local-OmniBots_installed_no_venv.zip` (362) and `dot-omnibots_data_home.zip` (42), each re-read and counted.
   - Files: `install.ps1` (default `%USERPROFILE%\.omnibots`; a folder with `settings.toml` or `db\` gets `git init` + fetch + checkout in place, and a failed checkout removes only the new `.git` and stops), `.gitignore` (every home name, anchored: backups, bots, db, forge, logs, profiles, project-history, projects, relays, sandbox, sessions, skills, settings.toml/json, user_profile.md, omnibots.lock, update.log), `README.md`.
@@ -1318,6 +1322,8 @@ All were decided by the user on 2026-09-25. Changing any of them needs the user'
 | (new 2026-09-25) | ADR-10–13, §4 Guild, A0.c.03, A2.b.06–07, A3.a.08–09, A4.a.05, A5.a.05, A6.a.04, A6.b, A7.a.08–10, A7.b, A8.c, A10.b.03, A10.d, A10.e, A11.f–i, A14.a.07 | the CORAL hub, seats, Ledger, Council, playbooks, Grok Bot parity (routines, chat, connectors, teach-by-showing, remote approvals) |
 
 ## 9. Notes Log
+
+- 2026-09-29 Claude: the move into `~/.omnibots` (A16.f.03) exposed two A9/A10 sandbox bugs, fixed: sandboxed Python now runs on the base interpreter (a venv in the user folder is unreadable to the AppContainer), and the Tool Forge grants a copy of the omnibots package instead of its parent folder (which is now the data home). Affects A9.a.01 and A10.b.01.
 
 - 2026-09-29 Claude: A16.f.03 moves the installed code into `~/.omnibots`, next to the data (like `~/.omni`). Cross-phase: A12.a.02 (hard reset) must only delete the data names in `.gitignore`, never the code now living in the home; A16.d (update) is unchanged (it re-runs the installer against its own folder).
 

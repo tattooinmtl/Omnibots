@@ -151,16 +151,11 @@ class ToolForge:
         return {"ok": True, "name": name, "risk": tool.risk, "review": review.text, "tests": test["output"][-600:]}
 
     async def _run_tests(self, name: str, folder: Path) -> dict[str, Any]:
-        import site
-        import sys
-        # A forged tool imports omnibots and its test imports pytest, both outside the sandbox's default
-        # reach. Grant those library dirs READ-ONLY (they hold no secrets); the run still has no network,
-        # no user documents and no vault access.
-        import omnibots
-        # The forged tool imports omnibots (read-granted). pytest lives under the user profile, which the
-        # sandbox can't traverse into, so a tiny stdlib runner calls every test_* in test_tool.py instead —
-        # no third-party dependency, no user-profile access. The run still has no network or vault access.
-        src = Path(omnibots.__file__).parent.parent
+        # The forged tool imports omnibots, from a read-only copy of the package (code_snapshot). pytest lives under
+        # the user profile, which the sandbox can't traverse into, so a tiny stdlib runner calls every test_* in
+        # test_tool.py instead — no third-party dependency, no user-profile access. No network or vault access.
+        from omnibots.runtime.sandbox import sandbox_python
+        src = self.code_snapshot()
         runner = (f"import sys, traceback, inspect, asyncio\nsys.path.insert(0, {str(src)!r})\n"
                   "import test_tool\n"
                   "fails = 0; ran = 0\n"
@@ -179,8 +174,39 @@ class ToolForge:
                   "print(f'{ran-fails}/{ran} passed'); sys.exit(1 if fails else 0)\n")
         script = folder / "_run.py"
         script.write_text(runner, encoding="utf-8")
-        res = await self.sandbox.run(["python", "_run.py"], cwd=folder, timeout=120, grant=[folder], grant_read=[src])
+        res = await self.sandbox.run([sandbox_python(), "_run.py"], cwd=folder, timeout=120, grant=[folder], grant_read=[src])
         return {"passed": (res.exit_code == 0 and not res.timed_out), "output": res.output}
+
+    def code_snapshot(self) -> Path:
+        """A read-only copy of the omnibots package (only its .py files) for forged-tool tests. Found 2026-09-29: the
+        package's parent folder used to be the code checkout; since the installer puts OmniBots in ~/.omnibots, that
+        folder also holds the database, logs and the bots' browser profiles, and granting it would have opened them
+        to a forged tool's tests. The copy is made once per code version and older copies are removed."""
+        import hashlib
+        import shutil
+
+        import omnibots
+        pkg = Path(omnibots.__file__).parent
+        files = sorted(p for p in pkg.rglob("*.py") if "__pycache__" not in p.parts)
+        h = hashlib.sha256()
+        for p in files:
+            h.update(p.relative_to(pkg).as_posix().encode())
+            h.update(p.read_bytes())
+        libs = Path(self.sandbox.root) / "_lib"
+        lib = libs / h.hexdigest()[:12]
+        if not (lib / "omnibots" / "__init__.py").is_file():
+            tmp = libs / f"{lib.name}.tmp"
+            shutil.rmtree(tmp, ignore_errors=True)
+            for p in files:
+                dest = tmp / "omnibots" / p.relative_to(pkg)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(p, dest)
+            shutil.rmtree(lib, ignore_errors=True)
+            tmp.rename(lib)
+        for old in libs.iterdir():
+            if old != lib:
+                shutil.rmtree(old, ignore_errors=True)
+        return lib
 
     async def _review(self, name: str, tool, code: str, test_code: str, test_output: str):
         from omnibots.runtime.review import review
