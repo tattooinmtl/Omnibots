@@ -11,7 +11,7 @@ from omnibots.doctor.doctor import GROUPS, run_doctor
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m omnibots.doctor",
-                                 description="Check, set up and repair everything OmniBots needs (see docs/DOCTOR.md).")
+                                 description="Check, set up and repair everything OmniBots needs (see README.md).")
     ap.add_argument("--no-fix", action="store_true", help="only check; repair nothing (the report is still saved to logs/doctor.json)")
     ap.add_argument("--online", action="store_true", help="also test each provider key against its server")
     ap.add_argument("--install-deps", action="store_true", help="pip-install missing Python packages")

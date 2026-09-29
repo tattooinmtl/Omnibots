@@ -1,5 +1,5 @@
 {
-  "_about": "The OmniBots doctor's reference: every folder, file, dependency and setting OmniBots and Omni need to work together. The doctor (python -m omnibots.doctor, Settings -> Doctor, or Omi's call_doctor tool) checks each entry, and repairs the ones marked fix. Paths use {tokens}: {home} = %OMNIBOTS_HOME% or ~/.omnibots; {omni} = Omni's install folder (~/.omni); {omni_home} = %OMNI_HOME% or {omni}/agent; {config} = {home}/config (OmniBots' own provider config, only when Omni isn't installed); {appdata} = %LOCALAPPDATA%/OmniBots; {output} = [output] folder in settings.toml. Explained in docs/DOCTOR.md.",
+  "_about": "The OmniBots doctor's reference: every folder, file, dependency and setting OmniBots and Omni need to work together. The doctor (python -m omnibots.doctor, Settings -> Doctor, or Omi's call_doctor tool) checks each entry, and repairs the ones marked fix. Paths use {tokens}: {home} = %OMNIBOTS_HOME% or ~/.omnibots; {omni} = Omni's install folder (~/.omni); {omni_home} = %OMNI_HOME% or {omni}/agent; {config} = {home}/config (OmniBots' own provider config, only when Omni isn't installed); {appdata} = %LOCALAPPDATA%/OmniBots; {output} = [output] folder in settings.toml. Explained in README.md (The doctor).",
   "version": 1,
 
   "allowed_roots": {
