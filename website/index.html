@@ -113,7 +113,8 @@
       <h2>Works with Omni</h2>
       <p class="sub">OmniBots and <a href="https://omni.globalwarningnetworks.com" target="_blank" rel="noopener">Omni</a> work
         together. Omni is the AI agent you talk to in your terminal, and it holds your AI provider keys and models. OmniBots
-        reads them from Omni, so Omi's team uses the same providers, and Omni starts OmniBots for you: type
+        uses the same ones, so Omi's team shares your providers, and you can add or edit a provider from either app
+        (in OmniBots: <b>Settings → Providers</b>). Omni starts OmniBots for you: type
         <code>/omnibots</code> in Omni (<code>/omnibots status</code> and <code>/omnibots stop</code> too). Both live side
         by side in your user folder, <code>~\.omni</code> and <code>~\.omnibots</code>.
         <b>So install Omni first, then OmniBots.</b></p>
@@ -134,6 +135,9 @@
             <code>/omnibots</code> in Omni.</p>
         </article>
       </div>
+      <p class="sub" style="margin-top:18px">No Omni? OmniBots still works on its own. It keeps its own provider list, in Omni's format, with your
+        keys encrypted for your Windows account, never in a text file. Its <b>doctor</b> (<b>Settings → Doctor</b>, or ask
+        Omi to call it) checks and repairs the setup of both apps: folders, providers, keys and dependencies.</p>
     </section>
 
     <section id="install" class="wrap section">
@@ -149,7 +153,7 @@
           </div>
           <p class="hint">It checks for Python 3.12+ and Git (and offers to install them), downloads OmniBots into
             <code>%USERPROFILE%\.omnibots</code> (next to Omni's <code>~\.omni</code>) with its own Python environment, and adds
-            <b>OmniBots</b> to the Start menu. <b>Run the same line again to update</b>;
+            <b>OmniBots</b> to the Start menu, then runs its doctor to set everything up. <b>Run the same line again to update</b>;
             <b>About → Check for updates</b> tells you when there's a new version. Install
             <a href="https://omni.globalwarningnetworks.com" target="_blank" rel="noopener">Omni</a> first: it holds your AI
             provider keys (<a href="#omni">why</a>).
