@@ -20,3 +20,12 @@ def test_omnibots_site_tells_you_to_install_omni_first():
     assert "/omnibots status" in HTML
     assert "/omnibots stop" in HTML
     assert "Install Omni first" in HTML
+
+
+def test_omnibots_site_explains_shared_providers_standalone_and_the_doctor():
+    """2026-09-29: providers are edited from either app; OmniBots works without Omni (keys encrypted); the doctor."""
+    assert "add or edit a provider from either app" in HTML
+    assert "Settings → Providers" in HTML
+    assert "No Omni? OmniBots still works on its own" in HTML
+    assert "never in a text file" in HTML
+    assert "Settings → Doctor" in HTML
