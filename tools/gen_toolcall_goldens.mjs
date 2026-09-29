@@ -114,7 +114,12 @@ const goldens = {
 const text = JSON.stringify(goldens, null, 1) + "\n";
 if (check) {
   const cur = fs.existsSync(out) ? fs.readFileSync(out, "utf8").replace(/\r\n/g, "\n") : "";
-  if (cur !== text) { console.error("tests/goldens/toolcalls.json is out of date with Omni; run: node tools/gen_toolcall_goldens.mjs"); process.exit(1); }
+  // Omni's version number alone isn't drift: every Omni release failed this check with nothing changed (found when
+  // Omni went 3.5.7 → 3.5.8 with only a new extension). The cases themselves must match.
+  let sameCases = false;
+  try { sameCases = JSON.stringify({ ...JSON.parse(cur), omni_version: null }) === JSON.stringify({ ...goldens, omni_version: null }); }
+  catch { sameCases = false; }
+  if (!sameCases) { console.error("tests/goldens/toolcalls.json is out of date with Omni; run: node tools/gen_toolcall_goldens.mjs"); process.exit(1); }
   console.log("toolcall goldens match Omni");
 } else {
   fs.mkdirSync(path.dirname(out), { recursive: true });
