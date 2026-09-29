@@ -35,6 +35,7 @@ KNOWN_TOOLS = {
     "browser_type", "browser_fill_secret", "browser_press", "create_tool",
     "computer_start", "computer_stop", "computer_run", "computer_upload", "computer_download",
     "computer_screenshot", "computer_click", "computer_type", "computer_key",
+    "deploy_site", "check_domain",
 }
 _MCP_REF = re.compile(r"^mcp:[A-Za-z0-9_.-]+$")
 

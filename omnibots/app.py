@@ -221,8 +221,19 @@ def main(argv: list[str] | None = None) -> int:
     def cmd_budget(_msg):
         return later(engine.budget.snapshot(), lambda b: {"ok": True, "budget": b}, timeout=10)
 
+    # Found 2026-09-28 (the Omni /omnibots launcher): a stop that came while the first-run folder window or the splash
+    # was up was lost (app.quit does nothing before app.exec runs). Now it closes that window and startup ends there.
+    stop_requested = {"now": False}
+
     def cmd_stop(_msg):
-        QTimer.singleShot(0, app.quit)
+        stop_requested["now"] = True
+
+        def go():
+            modal = QApplication.activeModalWidget()
+            if modal is not None:
+                modal.reject()
+            app.quit()
+        QTimer.singleShot(0, go)
         return {"ok": True}
 
     instance = SingleInstance(
@@ -253,6 +264,10 @@ def main(argv: list[str] | None = None) -> int:
         from omnibots.settings import save_setting
         from omnibots.ui.setup_dialog import ask_output_folder
         output = str(ask_output_folder())
+        if stop_requested["now"]:                          # stopped while asking: nothing chosen, nothing saved
+            log.info("stop requested during first-run setup; exiting")
+            instance.release()
+            return 0
         save_setting(paths.settings_file, "output", "folder", output)
         engine.set_output_dir(Path(output))
 
@@ -353,6 +368,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_window:
         app.setQuitOnLastWindowClosed(False)
 
+    if stop_requested["now"]:                               # a stop during the splash: quit as soon as the loop runs
+        QTimer.singleShot(0, app.quit)
     code = app.exec()
     engine.stop()  # no-op if aboutToQuit already ran it
     instance.release()
