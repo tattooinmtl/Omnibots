@@ -14,6 +14,7 @@ MESSAGE_TYPES = {
     "REVIEW_RESULT", "APPROVAL_REQUEST", "APPROVAL_DECISION", "TOOL_CREATED", "PLAYBOOK_UPDATED",
     "LOCK_ACQUIRED", "LOCK_RELEASED", "USER_STEER", "TASK_COMPLETED", "TASK_FAILED", "SYSTEM_RESET",
     "A2A_MESSAGE", "TOOL_REQUEST", "TOOL_RESULT",           # the tool relay (A8.d.02)
+    "PROPOSAL",                                             # a goal Omi proposes on its own (A17.e.01)
 }
 
 # Minimal payload contracts: these keys must be present.
@@ -38,6 +39,7 @@ REQUIRED = {
     "HELP_REQUEST": {"text"},
     "TOOL_REQUEST": {"request_id", "text"},
     "TOOL_RESULT": {"request_id", "text"},
+    "PROPOSAL": {"id", "title"},
 }
 
 ERROR_TYPES = {"TASK_FAILED", "BLOCKED", "CLAIM_REJECTED"}

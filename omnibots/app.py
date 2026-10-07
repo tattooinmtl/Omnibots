@@ -98,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         approvals_ask_from=str(settings.get("approvals", {}).get("ask_from", "R4")),
         skill_folders=list(settings.get("skills", {}).get("folders", [])),
         backup_settings=settings.get("backup", {}),
+        initiative=settings.get("initiative", {}),
     )
 
     def cmd_show(_msg):
@@ -218,6 +219,18 @@ def main(argv: list[str] | None = None) -> int:
             return {"ok": False, "error": "ceiling needs --id <bot> and --text R0..R5"}
         return later(engine.set_risk_ceiling(bot, level), lambda r: {"ok": True, "bot": bot, "ceiling": r}, timeout=10)
 
+    def cmd_proposals(_msg):                         # A17.e.01: Omi's ideas waiting in the inbox
+        return later(engine.ui_proposals(), lambda r: {"ok": True, "proposals": r}, timeout=10)
+
+    def cmd_proposal(msg):
+        pid, verb = str(msg.get("id") or ""), str(msg.get("text") or "").strip().lower()
+        if not pid or verb not in ("accept", "reject"):
+            return {"ok": False, "error": "proposal needs --id <proposal> and --text accept|reject"}
+        return later(engine.decide_proposal(pid, verb == "accept"), lambda r: {"ok": True, "proposal": r}, timeout=20)
+
+    def cmd_journal(_msg):
+        return later(engine.ui_journal(14), lambda r: {"ok": True, "journal": r}, timeout=10)
+
     def cmd_budget(_msg):
         return later(engine.budget.snapshot(), lambda b: {"ok": True, "budget": b}, timeout=10)
 
@@ -243,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
          "pause": team_cmd("pause"), "resume": team_cmd("resume"), "halt": team_cmd("stop"), "start": team_cmd("start"),
          "restart": team_cmd("restart"), "panic": lambda m: later(engine.team.stop(panic=True), lambda r: {"ok": True, **r}, timeout=60),
          "pause_bot": team_cmd("pause_bot"), "resume_bot": team_cmd("resume_bot"), "stop_bot": team_cmd("stop_bot"),
-         "preapprove": cmd_preapprove, "budget": cmd_budget, "rate": cmd_rate, "ceiling": cmd_ceiling, "snapshot": cmd_snapshot, "tray": cmd_tray},
+         "preapprove": cmd_preapprove, "budget": cmd_budget, "rate": cmd_rate, "ceiling": cmd_ceiling, "proposals": cmd_proposals, "proposal": cmd_proposal, "journal": cmd_journal, "snapshot": cmd_snapshot, "tray": cmd_tray},
     )
     if not instance.acquire():
         reply = send_command({"cmd": "show"})

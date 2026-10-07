@@ -10,6 +10,7 @@ cffi==2.1.1
 click==8.5.0
 colorama==0.4.6
 cryptography==50.0.1
+et_xmlfile==2.0.0
 greenlet==3.5.6
 h11==0.16.0
 httpcore==1.0.9
@@ -24,11 +25,14 @@ jaraco.functools==4.6.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 keyring==25.7.0
+lxml==6.1.3
 mcp==2.2.0
 mcp-types==2.2.0
 more-itertools==11.1.0
+openpyxl==3.1.5
 opentelemetry-api==1.45.0
 packaging==26.0
+pillow==12.3.0
 playwright==1.63.0
 pluggy==1.6.0
 pycparser==3.0
@@ -37,11 +41,14 @@ pydantic_core==2.46.4
 pyee==13.0.1
 Pygments==2.20.0
 PyJWT==2.15.0
+pypdf==6.19.0
 PySide6==6.11.2
 PySide6_Addons==6.11.2
 PySide6_Essentials==6.11.2
 pytest==9.1.1
+python-docx==1.2.0
 python-multipart==0.0.32
+python-pptx==1.0.2
 pywin32==312
 pywin32-ctypes==0.2.3
 referencing==0.37.0
@@ -53,3 +60,4 @@ truststore==0.10.4
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 uvicorn==0.54.0
+xlsxwriter==3.2.9

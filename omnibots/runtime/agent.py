@@ -448,7 +448,13 @@ class BotAgent:
             if tool is None:
                 allowed[idx] = None
                 continue
-            if self.risk_ceiling and RISK_ORDER.index(tool.risk) > RISK_ORDER.index(self.risk_ceiling):
+            above = bool(self.risk_ceiling) and RISK_ORDER.index(tool.risk) > RISK_ORDER.index(self.risk_ceiling)
+            if above and tool.risk == "R4":
+                # A17.b (2026-10-07): a paid tool the bot holds goes to the user's card (price, spend caps) instead of
+                # being refused: every R4 call needs the user's click anyway, so the user is the one who allows it
+                summary = f"above {self.name}'s usual limit ({self.risk_ceiling}): {summary}"
+                above = False
+            if above:
                 # A8.d.03: the bot's limit is on what kind of tool it may use at all; a call that becomes riskier
                 # (outside the project, destructive) still goes to the user below, as before
                 allowed[idx] = (f"REFUSED: {name} is {tool.risk}, above your limit ({self.risk_ceiling}). Don't retry; ask Omi, "
@@ -461,7 +467,7 @@ class BotAgent:
             if outside:
                 risk = risk if RISK_ORDER.index(risk) >= RISK_ORDER.index("R3") else "R3"
                 summary = f"leaves the project folder ({', '.join(outside[:3])}): {summary}"
-            if self.approvals.needs_approval(risk) or outside:
+            if self.approvals.needs_approval(risk) or outside or tool.always_ask:
                 frozen = json.loads(json.dumps(args, default=str))          # A9.b.03: what is approved is what runs
                 digest = args_digest(frozen)
                 rehearsal: dict[str, Any] = {"args_sha256": digest}

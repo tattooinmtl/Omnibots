@@ -55,7 +55,7 @@ class GoalContext:
 class BossToolkit:
     def __init__(self, *, ctx: GoalContext, db, bus, inbox: Inbox, registry, runner, graph, projects, ledger,
                  factory: BotFactory, router, skills: list | None = None, planner_chain: list[str] | None = None,
-                 playbooks=None, schedule=None, doctor=None):
+                 playbooks=None, schedule=None, doctor=None, initiative=None):
         self.c, self.db, self.bus, self.inbox = ctx, db, bus, inbox
         self.registry, self.runner, self.graph, self.projects, self.ledger = registry, runner, graph, projects, ledger
         self.factory, self.router, self.skills = factory, router, skills or []
@@ -63,6 +63,7 @@ class BossToolkit:
         self.schedule = schedule                            # A15.f.03: routines, triggers, night shift (the app only)
         self.playbooks = playbooks
         self.doctor = doctor                                # A16.d.03: the app's doctor (the app only)
+        self.initiative = initiative                        # A17.e.01: proposals and the journal (the app only)
 
     # ── helpers ────────────────────────────────────────────────────────
     async def _plan_jobs(self):
@@ -470,6 +471,18 @@ class BossToolkit:
         return rep.text() + ("\n(Keys are never shown. Anything the doctor couldn't repair needs the user: tell them the → step.)"
                              if rep.problems() else "")
 
+    async def propose_goal(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        """A17.e.01: an idea for the user's inbox; nothing starts until the user accepts it."""
+        try:
+            pid = await self.initiative.add(str(args.get("title", "")), str(args.get("goal", "")), str(args.get("why", "")))
+        except ValueError as exc:
+            return f"NOT PROPOSED: {exc}"
+        return f"proposed {pid}: it waits in the user's inbox; it starts only if they accept it"
+
+    async def read_journal(self, args: dict[str, Any], ctx: ToolContext) -> str:
+        days = await self.initiative.journal(max(1, min(30, int(args.get("days") or 7))))
+        return "\n\n".join(f"{d['day']}: {d['entry']}" for d in days) or "(the journal is empty so far)"
+
     def tools(self) -> list[Tool]:
         T = lambda name, desc, props, fn, req=(), risk="R0", timeout=600.0: Tool(
             name, desc, {"type": "object", "properties": props, "required": list(req)}, risk, fn, timeout=timeout, path_arg=None)
@@ -536,4 +549,10 @@ class BossToolkit:
               "can (fix, default true) and never deletes. online=true also tests each provider key with its server.",
               {"fix": {"type": "boolean"}, "online": {"type": "boolean"}}, self.call_doctor, timeout=300,
               risk="R1"),
-        ] if self.doctor is not None else [])
+        ] if self.doctor is not None else []) + ([
+            T("propose_goal", "Propose a goal the user might want next (it waits in their inbox; it never starts by itself). "
+              "Only ideas that clearly help, that don't spend money, publish or contact anyone.",
+              {"title": s, "goal": s, "why": s}, self.propose_goal, req=("title", "goal", "why")),
+            T("read_journal", "Read the team's journal: one entry per day of what happened.", {"days": {"type": "integer"}},
+              self.read_journal),
+        ] if self.initiative is not None else [])

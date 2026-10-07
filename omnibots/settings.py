@@ -91,6 +91,24 @@ money_per_task_usd = 2.0
 money_per_bot_day_usd = 5.0
 money_per_day_usd = 10.0
 
+[initiative]
+# PLAN.md A17.e.01. Omi's own ideas: up to 2 proposed goals every `every_hours` while the team is idle; they wait
+# in your inbox (Omi's chat, the tray) and never start until you accept one. At most `max_pending` wait at a time.
+# journal = a short entry about each day the team worked (journal/<day>.md in the OmniBots home).
+enabled = true
+every_hours = 24
+max_pending = 3
+journal = true
+
+[camera]
+# PLAN.md A17.a.03: the camera camera_snapshot uses (every picture asks you first).
+# source = "url" with url = "http://<camera-ip>/capture" (an ESP32 CameraWebServer, or any JPEG/MJPEG address
+# on this PC or the local network), or source = "webcam" with device = "<the webcam's name>".
+# Empty = OmniOne's camera if OmniOne has one set up, else no camera.
+source = ""
+url = ""
+device = ""
+
 [mcp_risk]
 # Risk class for MCP tools from Omni's mcpServers (PLAN.md A8.b.02): "server.tool"
 # or "server.*". Anything not listed is R3 (the user approves each call).

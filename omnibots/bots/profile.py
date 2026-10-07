@@ -21,9 +21,10 @@ from omnibots.runtime.tools import RISK_ORDER
 
 BOSS_ID = "omi"
 # A15.e.03: Omi reads, and does small jobs itself (a named list, not every tool: A8.b.03).
-BOSS_TOOLS = ["read_file", "list_dir", "write_file", "run_python", "grep", "find_files", "web_search", "web_fetch"]   # + search (A8.d.01)
+BOSS_TOOLS = ["read_file", "list_dir", "write_file", "run_python", "grep", "find_files", "web_search", "web_fetch",
+              "research"]   # + search (A8.d.01), research (A17.c.01)
 # A8.d.01: search is a default sense (R2, automatic); every other tool still has to be on the profile (A8.b.03)
-DEFAULT_TOOLS = ["read_file", "write_file", "list_dir", "run_python", "grep", "find_files", "web_search", "web_fetch",
+DEFAULT_TOOLS = ["read_file", "write_file", "list_dir", "run_python", "grep", "find_files", "web_search", "web_fetch", "research",
                  "find_skill", "invoke_skill", "ask_help"]
 USER_PROFILE_TEMPLATE = """# User Profile
 

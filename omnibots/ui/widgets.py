@@ -134,6 +134,7 @@ class BotCard:
     model: str = "minimax.io/m3"
     usage_pct: float = 0.0
     accent: str = theme.ACCENT
+    mood: str = ""                  # A17.d.02: "cheerful · Pirate"
 
 
 class IDCard(GlassPanel):
@@ -184,7 +185,8 @@ class IDCard(GlassPanel):
         col = {"Online": theme.GREEN, "Working": theme.ACCENT_CYAN, "Paused": theme.AMBER,
                "Waiting": theme.AMBER, "Stopped": theme.TEXT_DIM, "Needs approval": theme.RED}.get(c.status, theme.GREEN)
         self.status.setText(f"<span style='color:{col}'>●</span>&nbsp; {c.status}")
-        self.facts.setText(f"{c.role} · {c.seat}<br>{c.model}")
+        mood = f"<br><span style='color:{theme.ACCENT_CYAN}'>mood: {c.mood}</span>" if c.mood else ""
+        self.facts.setText(f"{c.role} · {c.seat}<br>{c.model}{mood}")
         self.usage.set_value(c.usage_pct)
 
 
@@ -628,6 +630,20 @@ class ChatPanel(GlassPanel):
         self.col.insertLayout(self.col.count() - 1, row)
         return card
 
+    def add_proposal(self, info: dict, on_decide) -> "ProposalCard":
+        """A17.e.01: one of Omi's own ideas, with Start it / Not now."""
+        card = ProposalCard(info, on_decide)
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        face = QLabel()
+        face.setPixmap(mini_face(self.accent, mood="happy", px=52, badge=self.badge))
+        face.setAlignment(Qt.AlignmentFlag.AlignTop)
+        row.addWidget(face, 0, Qt.AlignmentFlag.AlignTop)
+        row.addWidget(card, 1)
+        row.addSpacing(60)
+        self.col.insertLayout(self.col.count() - 1, row)
+        return card
+
     def add_approval(self, info: dict, on_decide) -> "ApprovalCard":
         """A bot is waiting for your OK (A11.e.01): a card in its chat with Approve / Deny."""
         card = ApprovalCard(info, on_decide)
@@ -641,6 +657,55 @@ class ChatPanel(GlassPanel):
         row.addSpacing(60)
         self.col.insertLayout(self.col.count() - 1, row)
         return card
+
+
+class ProposalCard(QFrame):
+    """A17.e.01: a goal Omi proposes on its own. Nothing starts until you press Start it."""
+
+    def __init__(self, info: dict, on_decide, parent=None):
+        super().__init__(parent)
+        self.info, self.on_decide, self.decided = info, on_decide, None
+        self.setObjectName("proposal")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"QFrame#proposal {{ background: {theme.BG2}; border: 1px solid {theme.ACCENT_CYAN}; border-radius: 14px; }}")
+        v = QVBoxLayout(self)
+        v.setContentsMargins(16, 12, 16, 12)
+        v.setSpacing(6)
+        head = QLabel(f"💡  <b>An idea from Omi:</b> {info.get('title', '')}")
+        head.setWordWrap(True)
+        head.setStyleSheet(f"color: {theme.ACCENT_CYAN}; font-size: 14px; background: transparent;")
+        v.addWidget(head)
+        body = QLabel(str(info.get("goal") or "") + (f"<br><span style='color:{theme.TEXT_DIM}'>Why: {info.get('why')}</span>"
+                                                       if info.get("why") else ""))
+        body.setWordWrap(True)
+        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        body.setStyleSheet("font-size: 14px; background: transparent;")
+        v.addWidget(body)
+        row = QHBoxLayout()
+        self.accept = QPushButton("▶  Start it")
+        self.reject = QPushButton("Not now")
+        self.accept.setStyleSheet(f"QPushButton {{ background: {theme.ACCENT}; border-radius: 10px; padding: 6px 16px; font-weight: 600; }}")
+        self.reject.setStyleSheet(f"QPushButton {{ background: {theme.BG3}; border: 1px solid {theme.BORDER}; border-radius: 10px; padding: 6px 16px; }}")
+        self.accept.clicked.connect(lambda: self._choose(True))
+        self.reject.clicked.connect(lambda: self._choose(False))
+        row.addWidget(self.accept)
+        row.addWidget(self.reject)
+        row.addStretch(1)
+        self.state = QLabel("")
+        self.state.setStyleSheet("background: transparent;")
+        row.addWidget(self.state)
+        v.addLayout(row)
+
+    def _choose(self, ok: bool) -> None:
+        if self.decided is None:
+            self.on_decide(self.info["id"], ok)
+            self.mark_decided(ok)
+
+    def mark_decided(self, ok: bool) -> None:
+        self.decided = ok
+        self.accept.setEnabled(False)
+        self.reject.setEnabled(False)
+        self.state.setText(f"<span style='color:{theme.GREEN if ok else theme.TEXT_DIM}'>{'▶ Started' if ok else 'Not now'}</span>")
 
 
 class OwnStrip(QFrame):

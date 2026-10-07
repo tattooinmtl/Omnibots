@@ -54,8 +54,8 @@ ACTIONS: dict[str, tuple[str, str]] = {
     "waiting":   ("Waiting for you", "an approval card is open"),
     "shopping":  ("Buying (R4)", "a paid action waiting for your click"),
     "speaking":  ("Speaking", "text_to_speech"),
-    "looking":   ("Looking", "describe_image, browser_screenshot"),
-    "filming":   ("Making video", "generate_video"),
+    "looking":   ("Looking", "describe_image, browser_screenshot, watch_video, camera_snapshot"),
+    "filming":   ("Making media", "generate_video, generate_image, edit_image, generate_music"),
 }
 
 CODE_EXT = {"py", "js", "ts", "tsx", "jsx", "mjs", "java", "c", "cpp", "h", "cs", "go", "rs", "rb", "php", "sh",
@@ -74,7 +74,9 @@ TOOL_ACTIONS = {
     "generate_video": "filming", "plan_goal": "thinking", "council": "thinking",
     "computer_run": "running", "computer_upload": "running", "computer_download": "running",
     "computer_click": "browsing", "computer_type": "browsing", "computer_key": "browsing",
-    "computer_screenshot": "looking",
+    "computer_screenshot": "looking", "watch_video": "looking", "camera_snapshot": "looking",
+    "generate_image": "filming", "edit_image": "filming", "generate_music": "filming", "clone_voice": "speaking",
+    "make_document": "writing", "research": "searching",
 }
 
 

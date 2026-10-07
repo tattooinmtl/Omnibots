@@ -55,10 +55,15 @@
     {"module": "keyring",    "pip": "keyring",    "why": "the bots' secrets in Windows Credential Manager"},
     {"module": "httpx",      "pip": "httpx",      "why": "talking to the providers"},
     {"module": "pydantic",   "pip": "pydantic",   "why": "data checks"},
-    {"module": "playwright", "pip": "playwright", "why": "the bots' browser", "severity": "warn"}
+    {"module": "playwright", "pip": "playwright", "why": "the bots' browser", "severity": "warn"},
+    {"module": "pypdf",      "pip": "pypdf",       "why": "reading PDFs", "severity": "warn"},
+    {"module": "docx",       "pip": "python-docx", "why": "Word documents", "severity": "warn"},
+    {"module": "openpyxl",   "pip": "openpyxl",    "why": "Excel workbooks", "severity": "warn"},
+    {"module": "pptx",       "pip": "python-pptx", "why": "PowerPoint slides", "severity": "warn"}
   ],
   "programs": [
-    {"name": "git", "why": "project history and updates", "severity": "warn"}
+    {"name": "git", "why": "project history and updates", "severity": "warn"},
+    {"name": "ffmpeg", "why": "watching videos and webcam pictures", "severity": "warn"}
   ],
 
   "env": [

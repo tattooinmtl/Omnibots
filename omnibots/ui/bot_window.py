@@ -69,8 +69,8 @@ class TitleBar(QWidget):
                 b.clicked.connect(self._open_settings)
             elif m == "About":
                 b.clicked.connect(self._open_about)
-            elif m in ("File", "Edit") and hasattr(window, "file_menu"):
-                b.setMenu(window.file_menu if m == "File" else window.edit_menu)
+            elif m in ("File", "Edit", "Layout") and hasattr(window, "file_menu"):
+                b.setMenu({"File": window.file_menu, "Edit": window.edit_menu, "Layout": window.layout_menu}[m])
                 b.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             b.setStyleSheet(f"QToolButton {{ border: none; padding: 6px 12px; font-size: 14px; color: {theme.TEXT}; }}"
                             f"QToolButton:hover {{ background: {theme.BG2}; border-radius: 8px; }}"
@@ -120,6 +120,9 @@ class BotWindow(QMainWindow):
     folder_opened = Signal(str)                         # File → Open folder: the bots work there (A11.m.03)
     new_project = Signal()                              # File → New project: the next goal starts a fresh folder
     session_action = Signal(str, str)                   # ("new" | "close" | "clear" | "reopen", session id)
+    on_top_changed = Signal(bool)                       # A17.d.03: Layout → Keep this window on top (LiveUI remembers it)
+    personality_chosen = Signal(str)                    # A17.d.01: a personality key, or "" = make a new one
+    mind_requested = Signal()                           # A17.d.04: Layout → The team's mind
 
     def __init__(self, card: BotCard, workspace: Path, team: list[tuple[str, str, str, str]] | None = None,
                  bot_id: str = "omi", computers=None, quit_on_close: bool = False):
@@ -133,6 +136,7 @@ class BotWindow(QMainWindow):
         self.pick_folder = lambda start: QFileDialog.getExistingDirectory(self, "Open folder", str(start)) or None
         self.pick_file = lambda start: QFileDialog.getOpenFileName(self, "Open file", str(start))[0] or None
         self.recent_sessions = lambda: []                 # LiveUI sets it: [(id, label)] for File → Recent sessions
+        self.personalities = lambda: ({}, "default")      # LiveUI sets it: ({key: label}, this bot's key)
         self._build_actions()
         self.setWindowTitle(f"OmniBots · {card.name}")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
@@ -239,6 +243,15 @@ class BotWindow(QMainWindow):
                   "close_tab"):
             self.file_menu.addSeparator() if k is None else self.file_menu.addAction(self.acts[k])
         self.file_menu.aboutToShow.connect(self._fill_recent)
+        # Layout (A17.d): keep on top, the bot's personality, the team's mind
+        self.layout_menu = QMenu(self)
+        self.on_top_act = self.layout_menu.addAction("Keep this window on top")
+        self.on_top_act.setCheckable(True)
+        self.on_top_act.toggled.connect(lambda on: (self.set_on_top(on), self.on_top_changed.emit(on)))
+        self.personality_menu = self.layout_menu.addMenu("Personality")
+        self.personality_menu.aboutToShow.connect(self._fill_personalities)
+        self.layout_menu.addSeparator()
+        self.layout_menu.addAction("The team's mind  (3D network)", self.mind_requested.emit)
         self.edit_menu = QMenu(self)
         for k in ("undo", "redo", None, "cut", "copy", "paste", None, "find", None, "rename", "duplicate", "delete", None,
                   "copy_path", "reveal", None, "clear_chat"):
@@ -252,6 +265,29 @@ class BotWindow(QMainWindow):
         if not items:
             a = self.recent_menu.addAction("(no closed sessions yet)")
             a.setEnabled(False)
+
+    def _fill_personalities(self) -> None:
+        self.personality_menu.clear()
+        choices, current = self.personalities()
+        for key, label in choices.items():
+            a = self.personality_menu.addAction(label, lambda k=key: self.personality_chosen.emit(k))
+            a.setCheckable(True)
+            a.setChecked(key == current)
+        self.personality_menu.addSeparator()
+        self.personality_menu.addAction("New personality…", lambda: self.personality_chosen.emit(""))
+
+    def set_on_top(self, on: bool) -> None:
+        """A17.d.03: float above other windows (Qt needs the window shown again after a flag change)."""
+        if bool(self.windowFlags() & Qt.WindowType.WindowStaysOnTopHint) == on:
+            return
+        visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on)
+        if visible:
+            self.show()
+        if self.on_top_act.isChecked() != on:
+            self.on_top_act.blockSignals(True)
+            self.on_top_act.setChecked(on)
+            self.on_top_act.blockSignals(False)
 
     def _clear_chat(self) -> None:
         if self.confirm("Clear chat?", "Remove every message in this session? (To keep them, use File → New session instead.)"):

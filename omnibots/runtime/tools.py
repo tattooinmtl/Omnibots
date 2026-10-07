@@ -87,6 +87,7 @@ class Tool:
     secret_target: Callable[[dict[str, Any]], str | None] | None = None   # where the values go (URL/host), for host scopes
     rehearse: Callable[[dict[str, Any], "ToolContext"], Awaitable[dict[str, Any]]] | None = None   # A9.b.02: what WILL happen
     cost: Callable[[dict[str, Any]], float | None] | None = None          # A9.c.02: USD estimate for an R4 call
+    always_ask: bool = False                 # A17.a.03: the user approves every call, whatever [approvals] ask_from says
 
     def schema(self) -> dict[str, Any]:
         return {"type": "function", "function": {"name": self.name, "description": self.description, "parameters": self.parameters}}
