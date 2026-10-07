@@ -80,7 +80,8 @@ class Engine:
                  omni_install_root: str = "", watch_interval: float = 2.0, home: Path | None = None,
                  orchestrator_settings: dict[str, Any] | None = None, mcp_risk: dict[str, str] | None = None,
                  budgets: dict[str, Any] | None = None, output_dir: str | Path | None = None, approvals_ask_from: str = "R3",
-                 skill_folders: list[str] | None = None, backup_settings: dict[str, Any] | None = None):
+                 skill_folders: list[str] | None = None, backup_settings: dict[str, Any] | None = None,
+                 initiative: dict[str, Any] | None = None):
         self.backup_settings = {"every_hours": 24, "keep": 7, "retention_days": 90, "audit_days": 365, **(backup_settings or {})}
         self.db = Database(db_path, backup_home=home, backup_keep=int(self.backup_settings["keep"]))
         self.output_dir = Path(output_dir) if output_dir else None      # A11.m.01: the user's output folder
@@ -90,6 +91,8 @@ class Engine:
         self.orch_settings = dict(orchestrator_settings or {})
         self.mcp_risk = dict(mcp_risk or {})
         self.budget_settings = dict(budgets or {})
+        self.initiative_settings = dict(initiative or {})                  # settings [initiative] (A17.e.01)
+        self.initiative = None
         self.budget: Budget | None = None
         self.playbooks: PlaybookStore | None = None
         self.vault: Vault | None = None
@@ -258,6 +261,15 @@ class Engine:
         self.orchestrator.leash = self.leash
         self.orchestrator.schedule = SimpleNamespace(routines=self.routines, triggers=self.triggers, night=self.night)
         self.orchestrator.doctor = self.run_doctor                # A16.d.03: Omi's call_doctor tool
+        from omnibots.orchestrator.initiative import Initiative                # A17.e.01: proposals and the journal
+        from omnibots.bots.profile import user_profile_text
+
+        async def omi_chat(messages):
+            routed = await self.router.chat(BOSS_ID, list(CHEAP_FIRST), messages, None)
+            return routed.result.answer.strip()
+        self.initiative = Initiative(self.db, omi_chat, self.home, bus=self.bus, settings=self.initiative_settings,
+                                     start_goal=self.start_goal, user_profile=lambda: user_profile_text(self.home))
+        self.orchestrator.initiative = self.initiative
         self.live_fetch = fetch_page
         self.spawn(self._live_checks(float(o.get("live_check_minutes", 30))), name="live-checks")   # A15.f.01
         self.spawn(self._keep_desks_loop(), name="keep-desks")                                          # A15.f.04
@@ -273,6 +285,8 @@ class Engine:
         self.spawn(self.presence.run(), name="presence")
         self.spawn(self._carry_on_after_restart(), name="carry-on")         # A15.d.02
         self.spawn(self._forward_board(), name="board-to-ui")
+        self.bridges: list = []
+        self.spawn(self._start_connectors(), name="connectors")             # A17.h: Telegram, Discord
         if self.home is not None:
             self.spawn(self._upkeep(), name="backup-and-housekeeping")      # A16.c
         self.accepting = True
@@ -441,6 +455,45 @@ class Engine:
             m = await sub.get()
             self.signals.board_message.emit(message_dict(m))
 
+    async def _start_connectors(self) -> None:
+        """A17.h: a connector starts only when its token is in the vault (and it isn't switched off)."""
+        from omnibots.connectors.bridge import save_setting_owner
+        from omnibots.settings import load_settings
+        try:
+            st = load_settings(self.home / "settings.toml")
+        except Exception:
+            st = {}
+        tg, dc = st.get("telegram") or {}, st.get("discord") or {}
+        token = self.vault.value("telegram_bot_token") if self.vault else None
+        if token and tg.get("enabled", True):
+            from omnibots.connectors.telegram import TelegramBridge
+            b = TelegramBridge(self, token, owner=str(tg.get("owner_chat_id") or "") or None,
+                               save_owner=save_setting_owner(self.home, "telegram", "owner_chat_id"))
+            self.bridges.append(b)
+            self.spawn(b.run(), name="telegram")
+            if not b.owner:
+                self.signals.alert.emit({"kind": "connector_pair", "connector": "Telegram", "code": b.pair_code})
+        token = self.vault.value("discord_bot_token") if self.vault else None
+        if token and dc.get("enabled", True):
+            from omnibots.connectors.discord import DiscordBridge
+            b = DiscordBridge(self, token, owner=str(dc.get("owner_user_id") or "") or None)
+            self.bridges.append(b)
+            self.spawn(b.run(), name="discord")
+        if not self.bridges:
+            return
+        sub = await self.bus.subscribe()
+        while True:
+            m = message_dict(await sub.get())
+            for b in list(self.bridges):
+                try:
+                    await b.on_board(m)
+                except Exception:
+                    log.exception("%s: couldn't forward a board message", b.name)
+
+    async def ui_connectors(self) -> list[dict[str, Any]]:
+        return [{"name": b.name, "paired": bool(b.owner), "pair_code": None if b.owner else b.pair_code,
+                 "account": (b.me or {}).get("username")} for b in getattr(self, "bridges", [])]
+
     def _bot_listener(self, ev: dict[str, Any]) -> None:
         """Every bot event: remember the bot's latest state (for the tray groups), then on to the windows."""
         if ev.get("kind") == "state":
@@ -509,6 +562,7 @@ class Engine:
         # the snapshot ends with a {"waiting": [...]} entry; only real, held seats count here
         seats = {s["holder"]: s["seat"] for s in (self.seats.snapshot() if self.seats else []) if s.get("holder")}
         out = []
+        chars = getattr(self.runner, "characters", None)                     # A17.d personalities and moods
         for b in await self.registry.list():
             first = b.chain[0] if b.chain else ""
             provider = first.split("::")[0].split("/")[0]
@@ -516,7 +570,10 @@ class Engine:
                         "model": first, "seat": seats.get(b.id), "usage_pct": float((quota.get(provider) or {}).get("used_pct") or 0),
                         "workspace": str(self.projects.folder(latest["id"]) if (b.id == BOSS_ID and latest and self.projects)
                                          else self.projects.folder(last_job[b.id]) if (b.id in last_job and self.projects)
-                                         else b.workspace), "active": b.id in self.runner.active})
+                                         else b.workspace), "active": b.id in self.runner.active,
+                        "tools": list(b.tools), "skills": list(b.skills),               # A17.d.04: the mind view
+                        "personality": chars.choices().get(chars.personality_of(b.id), "Default") if chars else "Default",
+                        "mood": chars.mood_text(b.id) if chars else ("calm", "happy")})
         return out
 
     async def ui_history(self, bot_id: str, events: int = 300, messages: int = 80) -> dict[str, Any]:
@@ -582,7 +639,26 @@ class Engine:
                 raise
             except Exception:
                 log.exception("backup/housekeeping pass failed")
+            try:
+                if self.initiative is not None:                    # A17.e.01: the journal, Omi's own ideas
+                    did = await self.initiative.tick(idle=not self.runner.active and not (self.team and self.team.paused))
+                    if did:
+                        log.info("initiative: %s", did)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("initiative pass failed")
             await asyncio.sleep(check_every)
+
+    # ── initiative (A17.e.01) ────────────────────────────────────────────
+    async def ui_proposals(self) -> list[dict[str, Any]]:
+        return await self.initiative.pending() if self.initiative else []
+
+    async def decide_proposal(self, pid: str, accept: bool, note: str = "") -> dict[str, Any]:
+        return await self.initiative.decide(pid, accept, note)
+
+    async def ui_journal(self, days: int = 7) -> list[dict[str, Any]]:
+        return await self.initiative.journal(days) if self.initiative else []
 
     # ── usage, health, projects (A13, A11.a.03) ────────────────────────────
     async def ui_stats(self, days: int = 14) -> dict[str, Any]:

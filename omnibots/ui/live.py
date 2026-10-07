@@ -17,6 +17,7 @@ window only hides it; without a system tray, closing Omi's window quits the app.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import time
 from pathlib import Path
@@ -30,6 +31,7 @@ from omnibots.ui.taunts import Taunts
 from omnibots.ui.widgets import BoardEntry, BotCard, ChatMessage
 
 log = logging.getLogger(__name__)
+THANKS = re.compile(r"(?i)\b(thanks?|thank you|thx|merci|great job|well done|good job|bravo)\b")
 
 STATE_MOOD = {"thinking": "thinking", "tool": "working", "waiting_approval": "thinking", "waiting_answer": "thinking", "waiting_seat": "sleepy",
               "sleeping": "sleepy", "rate_limited": "sleepy", "paused": "paused", "stopped": "paused",
@@ -168,6 +170,16 @@ class LiveUI(QObject):
             w.session_action.connect(lambda action, sid, b=bot_id: self.on_session(b, action, sid))
             if self.sessions is not None:
                 w.recent_sessions = lambda b=bot_id: [(s.id, s.label) for s in self.sessions.recent(b)]
+        if hasattr(w, "on_top_changed"):                          # A17.d: Layout menu
+            w.on_top_changed.connect(lambda on, b=bot_id: self.remember_on_top(b, on))
+            w.personality_chosen.connect(lambda key, b=bot_id: self.choose_personality(b, key))
+            w.mind_requested.connect(self.open_mind)
+            chars = self.characters()
+            if chars is not None:
+                w.personalities = lambda b=bot_id, c=chars: (c.choices(), c.personality_of(b))
+            if bot_id in self.ui_state().get("on_top", []):
+                w.set_on_top(True)
+            self._show_mood(bot_id, w)
         current = self.sessions.current(bot_id) if self.sessions is not None else None
         if self.sessions is not None and hasattr(w.chat, "added"):
             w.chat.added.connect(lambda who, text, b=bot_id: self._save_chat(b, who, text))
@@ -197,10 +209,116 @@ class LiveUI(QObject):
         for a in (approvals.list_pending() if approvals is not None else []):
             if a.get("bot_id") == bot_id or bot_id == "omi":
                 self.cards.setdefault(str(a["id"]), []).append(w.chat.add_approval(a, self.decide))
+        if bot_id == "omi" and hasattr(self.engine, "ui_connectors"):      # A17.h: a phone still to pair
+            self._later(self.engine.ui_connectors(), lambda cs, err: [
+                self.on_alert({"kind": "connector_pair", "connector": c["name"], "code": c["pair_code"]})
+                for c in (cs or []) if c.get("pair_code")] if not err else None)
+        if bot_id == "omi" and hasattr(self.engine, "ui_proposals"):        # A17.e.01: ideas waiting in the inbox
+            self._later(self.engine.ui_proposals(), lambda props, err: [self.show_proposal(p) for p in (props or [])] if not err else None)
         if bot_id == "omi" and getattr(w, "own_strip", None) is not None and hasattr(self.engine, "ui_background_today"):
             self._own_strip(w)
         w.show()
         return w
+
+    # ── Omi's own ideas (A17.e.01) ─────────────────────────────────────────
+    def show_proposal(self, p: dict[str, Any]) -> None:
+        w = self.windows.get("omi")
+        shown = getattr(self, "_proposals", None)
+        if shown is None:
+            shown = self._proposals = {}
+        if w is None or p.get("id") in shown or not hasattr(w.chat, "add_proposal"):
+            return
+        shown[p["id"]] = w.chat.add_proposal(p, self.decide_proposal)
+
+    def decide_proposal(self, pid: str, accept: bool) -> None:
+        w = self.windows.get("omi")
+
+        def then(r, err):
+            if w is None:
+                return
+            if err:
+                w.chat.add(ChatMessage("bot", f"✖ couldn't do that: {err}"))
+            elif accept:
+                w.chat.add(ChatMessage("bot", f"On it! Starting “{r.get('title')}” ({r.get('project_id')})."))
+        self._later(self.engine.decide_proposal(pid, accept), then)
+
+    # ── presence: on top, personalities, moods, the mind (A17.d) ──────────
+    def characters(self):
+        return getattr(getattr(self.engine, "runner", None), "characters", None)
+
+    def ui_state(self) -> dict[str, Any]:
+        home = getattr(self.engine, "home", None)
+        try:
+            return json.loads((Path(home) / "ui_state.json").read_text(encoding="utf-8")) if home else {}
+        except (OSError, ValueError):
+            return {}
+
+    def remember_on_top(self, bot: str, on: bool) -> None:
+        home = getattr(self.engine, "home", None)
+        if not home:
+            return
+        st = self.ui_state()
+        tops = [b for b in st.get("on_top", []) if b != bot] + ([bot] if on else [])
+        st["on_top"] = tops
+        (Path(home) / "ui_state.json").write_text(json.dumps(st, indent=2), encoding="utf-8")
+
+    def choose_personality(self, bot: str, key: str) -> None:
+        chars = self.characters()
+        if chars is None:
+            return
+        w = self.windows.get(bot)
+        if not key:
+            from omnibots.ui.personality_dialog import PersonalityDialog
+            dlg = PersonalityDialog(w)
+            if not dlg.exec():
+                return
+            try:
+                key = chars.add_custom(**dlg.values())
+            except ValueError as exc:
+                if w is not None:
+                    w.chat.add(ChatMessage("bot", f"✖ {exc}"))
+                return
+        chars.set_personality(bot, key)
+        if w is not None:
+            label = chars.choices().get(key, key)
+            w.chat.add(ChatMessage("bot", f"Personality: {label}. You'll hear it in my next answers (style only; the work stays the same)."))
+            self._show_mood(bot, w)
+
+    def _show_mood(self, bot: str, w=None) -> None:
+        """The ID card shows the mood and personality; an idle face wears the mood."""
+        chars = self.characters()
+        w = w or self.windows.get(bot)
+        if chars is None or w is None or not hasattr(w, "card"):
+            return
+        word, face = chars.mood_text(bot)
+        label = chars.choices().get(chars.personality_of(bot), "Default")
+        w.card.card.mood = f"{word}" + (f" · {label}" if label != "Default" else "")
+        w.card.refresh()
+        return face
+
+    def open_mind(self) -> None:
+        from omnibots.ui.mind_view import MindView
+        if getattr(self, "_mind", None) is None:
+            self._mind = MindView(list(self.bots.values()))
+        self.refresh_bots_later(lambda: self._mind.set_bots(list(self.bots.values())) if self._mind else None)
+        self._mind.show()
+        self._mind.raise_()
+        self._mind.activateWindow()
+
+    def _mind_event(self, bot: str, kind: str, content: str) -> None:
+        mind = getattr(self, "_mind", None)
+        if mind is None or not mind.isVisible():
+            return
+        if kind == "tool":
+            try:
+                t = json.loads(content)
+            except ValueError:
+                return
+            if t.get("phase") == "start":
+                mind.pulse_tool(bot, t.get("name", ""))
+        elif kind == "state":
+            state = content.partition(":")[0].strip()
+            mind.set_busy(bot, state in ("thinking", "tool", "waiting_approval", "waiting_answer"))
 
     # ── on their own (A15.g) ──────────────────────────────────────────────
     def _own_strip(self, w) -> None:
@@ -321,6 +439,10 @@ class LiveUI(QObject):
 
     # ── approvals you can see (A11.e.01) ──────────────────────────────────
     def on_alert(self, a: dict[str, Any]) -> None:
+        if a.get("kind") == "connector_pair" and "omi" in self.windows:             # A17.h: pair the phone
+            self.windows["omi"].chat.add(ChatMessage("bot", f"{a.get('connector')} is connected. To talk to me from your phone, "
+                                                            f"send this to your bot once:  /pair {a.get('code')}"))
+            return
         if a.get("kind") == "approval_request":
             self.show_approval(a)
         elif a.get("kind") == "approval_decision":
@@ -382,6 +504,8 @@ class LiveUI(QObject):
     def on_bot_event(self, ev: dict[str, Any]) -> None:
         bot, kind, content = ev.get("bot_id"), ev.get("kind"), ev.get("content") or ""
         w = self.windows.get(bot)
+        if kind in ("tool", "state"):
+            self._mind_event(bot, kind, content)
         if kind in ("console", "terminal", "thinking") and w is not None:
             panel = w.thinking if kind == "thinking" else w.console
             if ev.get("stream"):
@@ -415,9 +539,10 @@ class LiveUI(QObject):
             w.card.refresh()
             if state in ("done", "idle", "stopped", "error", "blocked"):
                 w.face.set_action(None)
+            mood_face = self._show_mood(bot, w) if state in ("done", "idle") else None
             if state in ("waiting_approval", "waiting_answer"):
                 w.face.set_action("waiting")
-            w.face.set_mood(STATE_MOOD.get(state, "happy"))
+            w.face.set_mood(mood_face or STATE_MOOD.get(state, "happy"))
         words = {"thinking": "thinking" + (f" ({detail})" if detail else ""), "waiting_approval": f"waiting for your click: {detail}",
                  "waiting_answer": f"asked you: {detail}",
                  "waiting_seat": f"waiting for a MiniMax seat {detail}".strip(), "done": "done", "idle": "idle",
@@ -505,6 +630,8 @@ class LiveUI(QObject):
             if target in self.windows and (target, text) not in self._typed:
                 self._chat_from(target, self.windows[target], m)
             self._typed.discard((target, text))                     # typed in that window: already shown there
+        if m.get("type") == "PROPOSAL":                              # A17.e.01: a new idea from Omi → its card
+            self.show_proposal({**(m.get("payload") or {})})
         # A16.b: a goal wrote its REPORT.md → ask how it went, in Omi's chat
         if m.get("type") == "ARTIFACT_READY" and (m.get("payload") or {}).get("text") == "REPORT.md" and m.get("project_id"):
             self.ask_verdict(m["project_id"])
@@ -527,6 +654,13 @@ class LiveUI(QObject):
     # ── you → bots ────────────────────────────────────────────────────────
     def on_prompt(self, bot: str, text: str) -> None:
         w = self.windows.get(bot)
+        chars = self.characters()
+        if chars is not None and THANKS.search(text or ""):          # A17.d.02: being thanked cheers a bot up
+            try:
+                chars.feel(bot, "thanks")
+                self._show_mood(bot, w)
+            except OSError:
+                pass
         text = self._attach(bot, w, text)
         self._typed.add((bot, text))
         active = bot in getattr(getattr(self.engine, "runner", None), "active", {})

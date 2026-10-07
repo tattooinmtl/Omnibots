@@ -6,7 +6,12 @@ A local team of AI bots, **the Guild**. A boss bot plans your goal, lends out Mi
 
 ## Install
 
-In **PowerShell** (Windows 10/11):
+**The Windows installer:** `OmniBots-Setup-1.0-<version>.exe` from https://omnibots.globalwarningnetworks.com. It carries
+the code itself (a git bundle), runs the same steps as the line below, and shows them as it goes. Silent install:
+`OmniBots-Setup.exe --dir D:\OmniBots --auto` (also `--no-shortcut`, `--no-browser`; the log is
+`%TEMP%\OmniBots-Setup.log`). Build it with `python installer/build.py`.
+
+Or in **PowerShell** (Windows 10/11):
 
 ```powershell
 irm https://raw.githubusercontent.com/tattooinmtl/Omnibots/master/install.ps1 | iex
@@ -31,6 +36,17 @@ python -m omnibots
 | `python -m omnibots --send status` | Ask the running app for its status (JSON) |
 | `python -m omnibots --send stop` | Close the running app cleanly |
 | `python -m omnibots --no-window --exit-after 5` | Headless start and clean exit (used by tests) |
+
+## What the bots can do
+
+Besides planning, coding, testing and deploying as a team: read PDF/Word/Excel/PowerPoint; watch videos; take a camera
+picture (`[camera]` in settings.toml, every picture asks); make pictures, picture edits, slides, documents and PDFs;
+research with cited sources; personalities and moods (Layout menu), keep-on-top windows and the team's mind (3D);
+Omi's own goal ideas (they start only when you accept) and a daily journal; a live preview beside the editor; MCP
+servers local or over HTTP (`~/.omnibots/mcp.json`, plus Omni's and OmniOne's), including Blender; GitHub repos,
+issues and pull requests (`github_token` in the vault); read-only PC checks with fixes you approve; ESP32, Pico and
+Arduino boards; and the team in Telegram or Discord (`telegram_bot_token` / `discord_bot_token` in the vault, then pair
+your chat; nothing listens on your PC). The feature-by-feature comparison is on the website (`compare.html`).
 
 ## Where data lives
 

@@ -66,7 +66,7 @@ class Orchestrator:
         kit = BossToolkit(ctx=ctx, db=self.db, bus=self.bus, inbox=inbox, registry=self.registry, runner=self.runner,
                           graph=self.graph, projects=self.projects, ledger=self.ledger, factory=self.factory,
                           router=self.router, skills=self.skills(), planner_chain=self.planner_chain, playbooks=self.playbooks, schedule=getattr(self, 'schedule', None),
-                          doctor=getattr(self, 'doctor', None))
+                          doctor=getattr(self, 'doctor', None), initiative=getattr(self, 'initiative', None))
         existing = [p.name for p in ctx.folder.iterdir() if p.name not in ("GOAL.md", ".git")] if ctx.folder.is_dir() else []
         here = (f"\n\nYou're working in an EXISTING folder ({ctx.folder}) that already has: {', '.join(sorted(existing)[:25])}. "
                 "This goal continues that work: look at those files first (list_dir / read_file) and build on them."

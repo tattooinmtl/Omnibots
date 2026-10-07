@@ -27,6 +27,7 @@ EXPECTED_TABLES = {
     "verdicts",                                           # 006 (A16.b)
     "night_queue",                                        # 007 (A15.f.03)
     "provider_keys",                                      # 008 (A1.s.01)
+    "proposals", "journal",                               # 009 (A17.e.01)
 }
 LATEST = len(list_migrations())
 

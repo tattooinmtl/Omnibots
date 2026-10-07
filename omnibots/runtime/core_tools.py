@@ -7,6 +7,7 @@ user's own files always needs their approval.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Any
@@ -68,7 +69,14 @@ async def read_file(args: dict[str, Any], ctx: ToolContext) -> str:
     path = _resolve(ctx, args["path"])
     if not path.is_file():
         return f"ERROR: no such file: {args['path']}"
-    text = path.read_text(encoding="utf-8", errors="replace")
+    from omnibots.runtime.documents import document_text, is_document
+    if is_document(path):                       # A17.a.01: PDF, Word, Excel, PowerPoint become text
+        try:
+            text = await asyncio.to_thread(document_text, path)
+        except ValueError as exc:
+            return f"ERROR: can't read {args['path']}: {exc}"
+    else:
+        text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
     offset = int(args.get("offset") or 0)
     limit = int(args.get("limit") or 0) or len(lines)
@@ -156,7 +164,7 @@ async def rehearse_write(args: dict[str, Any], ctx: ToolContext) -> dict[str, An
 def core_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.add(Tool(
-        "read_file", "Read a text file (line-numbered). Paths are relative to your workspace.",
+        "read_file", "Read a file (line-numbered). Text files as they are; PDF, Word (.docx), Excel (.xlsx) and PowerPoint (.pptx) come back as their text. Paths are relative to your workspace.",
         {"type": "object", "properties": {"path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}, "required": ["path"]},
         "R0", read_file, classify=_outside_is_r3, summary=lambda a: f"read {a.get('path')}"))
     reg.add(Tool(
@@ -178,6 +186,12 @@ def core_registry() -> ToolRegistry:
         reg.add(t)
     from omnibots.runtime.hosting import hosting_tools          # deploy_site (R3) + check_domain (A10.c.01)
     for t in hosting_tools():
+        reg.add(t)
+    from omnibots.runtime.hardware import hardware_tools          # pc_check, pc_fix, board_list, board_run (A17.g)
+    for t in hardware_tools():
+        reg.add(t)
+    from omnibots.runtime.make_docs import doc_tools               # make_document: docx, pptx, xlsx, pdf (A17.b.05)
+    for t in doc_tools():
         reg.add(t)
     from omnibots.runtime.more_tools import core_extra_tools    # grep, find_files, run_shell, git_* (A8.b.01)
     for t in core_extra_tools():

@@ -41,6 +41,13 @@ def match_run(ref: str, runs: list[dict[str, Any]]) -> dict[str, Any] | None:
     if len(want) < 3:
         return None
     for run in reversed(runs):
+        if run.get("tool"):
+            # a tool call (A17 re-audit) only backs evidence that names that tool, so a vague "pytest" can't match a
+            # read_file of pytest.ini; MCP tools also match by their own name ("render_image" for mcp__blender__render_image)
+            names = {_norm_cmd(run["tool"]), _norm_cmd(run["tool"].split("__")[-1])}
+            if any(want == n or want.startswith(n + " ") for n in names if n):
+                return run
+            continue
         have = _norm_cmd(run["command"])
         if want == have or want in have or (len(have) >= 6 and have in want):
             return run

@@ -148,6 +148,8 @@ class JobRunner:
         self.tasks: dict[str, asyncio.Task] = {}          # bot_id -> the task running its job (for stop)
         self.last_activity: dict[str, float] = {}         # bot_id -> monotonic time of its last event (stall detection)
         user_profile_path(home)                            # make sure the shared profile exists
+        from omnibots.bots.character import Characters
+        self.characters = Characters(home)                 # A17.d: personalities and moods
 
     # ── prompt + tools ─────────────────────────────────────────────────
     def system_prompt(self, prof: BotProfile) -> str:
@@ -163,6 +165,13 @@ class JobRunner:
                 s = self.skill_pool.get(name) if self.skill_pool is not None else None
                 lines.append(f"- {name}: {(s.description if s else '')[:160]}")
             parts.append("Your skills (invoke_skill each one that fits before you start):\n" + "\n".join(lines))
+        chars = getattr(self, "characters", None)            # A17.d (absent on a runner made without __init__)
+        overlay = chars.overlay(prof.id) if chars else ""    # A17.d.01: style only, after the role and the rules
+        if overlay:
+            parts.append(overlay)
+        feeling = chars.mood_line(prof.id) if chars else ""  # A17.d.02
+        if feeling:
+            parts.append(feeling)
         profile = user_profile_text(self.home)
         if profile:
             parts.append("What you know about the user (shared by the whole team):\n" + profile)
@@ -192,6 +201,9 @@ class JobRunner:
             from omnibots.runtime.computer_tools import computer_tools
             for t in computer_tools(self.computers):
                 reg.add(t)
+        from omnibots.runtime.github_tools import github_tools      # A17.f.04: the token is the vault's github_token
+        for t in github_tools(lambda: self.vault.value("github_token") if self.vault is not None else None):
+            reg.add(t)
         if self.forge is not None:
             from omnibots.orchestrator.forge import forge_tool
             reg.add(forge_tool(self.forge))
@@ -411,6 +423,11 @@ class JobRunner:
             await self.db.write("UPDATE jobs SET status=?, result_summary=?, error_message=?, finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
                                 (status, answer[:4000], error, job_id))
             await self.registry.set_status(bot_id, "idle")
+            if status in ("completed", "failed", "blocked"):
+                try:                                        # A17.d.02: how the job went moves the bot's mood
+                    self.characters.feel(bot_id, {"completed": "job_passed", "failed": "job_failed"}.get(status, "long_wait"))
+                except OSError:
+                    log.debug("mood not saved", exc_info=True)
             prof.memory.add_job(job_id, title, status, answer or (error or ""))
             prof.memory.clear_current_task()
             if self.bus:

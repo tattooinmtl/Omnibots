@@ -33,6 +33,9 @@ from omnibots.runtime.sandbox import Sandbox
 from omnibots.runtime.scope import outside_paths
 from omnibots.runtime.tools import RISK_ORDER, RISK_TEXT, ToolContext, ToolRegistry, args_digest, target_host
 
+# tools that record their own runs (with exit codes and output), and the claim tools themselves (never evidence)
+SELF_RECORDING = {"run_shell", "run_python", "pc_fix", "board_run", "submit", "submit_claim", "complete_own_job"}
+
 log = logging.getLogger(__name__)
 
 MAX_PARSE_RECOVERIES = 3
@@ -448,7 +451,13 @@ class BotAgent:
             if tool is None:
                 allowed[idx] = None
                 continue
-            if self.risk_ceiling and RISK_ORDER.index(tool.risk) > RISK_ORDER.index(self.risk_ceiling):
+            above = bool(self.risk_ceiling) and RISK_ORDER.index(tool.risk) > RISK_ORDER.index(self.risk_ceiling)
+            if above and tool.risk == "R4":
+                # A17.b (2026-10-07): a paid tool the bot holds goes to the user's card (price, spend caps) instead of
+                # being refused: every R4 call needs the user's click anyway, so the user is the one who allows it
+                summary = f"above {self.name}'s usual limit ({self.risk_ceiling}): {summary}"
+                above = False
+            if above:
                 # A8.d.03: the bot's limit is on what kind of tool it may use at all; a call that becomes riskier
                 # (outside the project, destructive) still goes to the user below, as before
                 allowed[idx] = (f"REFUSED: {name} is {tool.risk}, above your limit ({self.risk_ceiling}). Don't retry; ask Omi, "
@@ -461,7 +470,7 @@ class BotAgent:
             if outside:
                 risk = risk if RISK_ORDER.index(risk) >= RISK_ORDER.index("R3") else "R3"
                 summary = f"leaves the project folder ({', '.join(outside[:3])}): {summary}"
-            if self.approvals.needs_approval(risk) or outside:
+            if self.approvals.needs_approval(risk) or outside or tool.always_ask:
                 frozen = json.loads(json.dumps(args, default=str))          # A9.b.03: what is approved is what runs
                 digest = args_digest(frozen)
                 rehearsal: dict[str, Any] = {"args_sha256": digest}
@@ -517,6 +526,12 @@ class BotAgent:
                     result = await self.tools.run(name, args, ctx)
             else:
                 result = await self.tools.run(name, args, ctx)
+            if tool is not None and name not in SELF_RECORDING and not name.startswith("mcp__"):
+                # A17 re-audit (found live 2026-10-07): a claim citing a real tool call (text_to_speech, a render…) was
+                # refused as "you did not run it"; every tool call is a real run with its real result
+                ctx.runs.append({"command": f"{name} {json.dumps(args, ensure_ascii=False, default=str)[:400]}", "tool": name,
+                                 "exit_code": 1 if result.startswith(("ERROR", "DENIED", "REFUSED")) else 0,
+                                 "timed_out": False, "output": (result or "")[-8000:]})
             if idx in approved and approved[idx][1] and self.budget and not result.startswith(("ERROR", "DENIED")):
                 await self.budget.record_spend(bot_id=self.bot_id, job_id=ctx.job_id, project_id=None, tool=name,
                                                amount=approved[idx][1], description=summary, approval_id=approved[idx][2])
