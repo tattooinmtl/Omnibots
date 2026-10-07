@@ -150,9 +150,9 @@ class MCPManager:
             failed = bool(getattr(res, "is_error", None) or getattr(res, "isError", None))
             # found live 2026-10-07: a claim citing a Blender render was refused ("you did not run …"); an MCP call is a
             # real run, so the ledger can check it like a command
-            from types import SimpleNamespace
-            ctx.record_run(f"mcp__{server}__{t.name} {json.dumps(args, ensure_ascii=False)}",
-                           SimpleNamespace(exit_code=1 if failed else 0, timed_out=False, output=text))
+            ctx.runs.append({"command": f"mcp__{server}__{t.name} {json.dumps(args, ensure_ascii=False)}",
+                             "tool": f"mcp__{server}__{t.name}", "exit_code": 1 if failed else 0, "timed_out": False,
+                             "output": text[-8000:]})
             return ("ERROR: " if failed else "") + text
 
         schema = getattr(t, "input_schema", None) or getattr(t, "inputSchema", None) or {"type": "object", "properties": {}}

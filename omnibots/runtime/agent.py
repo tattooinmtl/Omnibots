@@ -33,6 +33,9 @@ from omnibots.runtime.sandbox import Sandbox
 from omnibots.runtime.scope import outside_paths
 from omnibots.runtime.tools import RISK_ORDER, RISK_TEXT, ToolContext, ToolRegistry, args_digest, target_host
 
+# tools that record their own runs (with exit codes and output), and the claim tools themselves (never evidence)
+SELF_RECORDING = {"run_shell", "run_python", "pc_fix", "board_run", "submit", "submit_claim", "complete_own_job"}
+
 log = logging.getLogger(__name__)
 
 MAX_PARSE_RECOVERIES = 3
@@ -523,6 +526,12 @@ class BotAgent:
                     result = await self.tools.run(name, args, ctx)
             else:
                 result = await self.tools.run(name, args, ctx)
+            if tool is not None and name not in SELF_RECORDING and not name.startswith("mcp__"):
+                # A17 re-audit (found live 2026-10-07): a claim citing a real tool call (text_to_speech, a render…) was
+                # refused as "you did not run it"; every tool call is a real run with its real result
+                ctx.runs.append({"command": f"{name} {json.dumps(args, ensure_ascii=False, default=str)[:400]}", "tool": name,
+                                 "exit_code": 1 if result.startswith(("ERROR", "DENIED", "REFUSED")) else 0,
+                                 "timed_out": False, "output": (result or "")[-8000:]})
             if idx in approved and approved[idx][1] and self.budget and not result.startswith(("ERROR", "DENIED")):
                 await self.budget.record_spend(bot_id=self.bot_id, job_id=ctx.job_id, project_id=None, tool=name,
                                                amount=approved[idx][1], description=summary, approval_id=approved[idx][2])

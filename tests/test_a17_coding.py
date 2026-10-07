@@ -227,3 +227,15 @@ def test_an_mcp_call_counts_as_a_real_run_for_claims(tmp_path, http_mcp):
         return ctx.runs
     runs = asyncio.run(go())
     assert match_run("mcp__scene__add_cube", runs)["exit_code"] == 0
+
+
+def test_tool_calls_back_evidence_only_by_their_own_name():
+    """A17 re-audit: a claim may cite a real tool call (text_to_speech, an MCP render), but a vague command can't
+    borrow a tool call's success (pytest must not match a read_file of pytest.ini)."""
+    from omnibots.board.ledger import match_run
+    runs = [{"command": 'read_file {"path": "pytest.ini"}', "tool": "read_file", "exit_code": 0, "output": "x"},
+            {"command": 'text_to_speech {"text": "hi"}', "tool": "text_to_speech", "exit_code": 0, "output": "wrote speech.mp3"},
+            {"command": 'mcp__blender__render_image {"output_path": "r.png"}', "tool": "mcp__blender__render_image", "exit_code": 0, "output": "ok"}]
+    assert match_run("pytest", runs) is None
+    assert match_run("text_to_speech", runs)["output"] == "wrote speech.mp3"
+    assert match_run("render_image", runs) and match_run("mcp__blender__render_image", runs)
