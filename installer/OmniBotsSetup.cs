@@ -4,6 +4,9 @@
 // as a git bundle (so it installs exactly the version printed on it, even offline from GitHub) and Omi's icon. It
 // shows what install.ps1 does, live, and offers to start OmniBots at the end. Later updates come from GitHub as usual.
 //
+// Silent install (also how it is tested): OmniBots-Setup.exe --dir "D:\OmniBots" --no-shortcut --no-browser --auto
+// --auto starts at once and closes itself when done; the exit code is install.ps1's; the log is %TEMP%\OmniBots-Setup.log.
+//
 // Built by installer/build.py with the C# compiler that ships with Windows (.NET Framework 4.x), so it runs on any
 // Windows 10/11 without installing anything first. C# 5: no string interpolation, no "=>" members.
 
@@ -27,7 +30,7 @@ namespace OmniBotsSetup
 {
     public static partial class Info
     {
-        // InstallerVersion and AppVersion come from Version.cs, written by build.py
+        // InstallerVersion, AppVersion and Commit come from Version.cs, written by build.py
     }
 
     public class SetupForm : Form
@@ -48,6 +51,9 @@ namespace OmniBotsSetup
         Process proc;
         string work;
         string installedDir;
+        public bool Auto;                                   // --auto: install at once, close when done
+        public int ExitCode = 1;
+        static readonly string LogFile = Path.Combine(Path.GetTempPath(), "OmniBots-Setup.log");
 
         public SetupForm()
         {
@@ -62,7 +68,7 @@ namespace OmniBotsSetup
             try { Icon = new Icon(Resource("omi.ico")); } catch { }
 
             var logo = new PictureBox { Location = new Point(28, 22), Size = new Size(64, 64), SizeMode = PictureBoxSizeMode.Zoom };
-            try { logo.Image = new Icon(Resource("omi.ico"), 64, 64).ToBitmap(); } catch { }
+            try { logo.Image = Image.FromStream(Resource("omi.png")); } catch { }   // the .ico's big frames are PNG: Icon can't draw them
             Controls.Add(logo);
             Controls.Add(new Label { Text = "OmniBots", Location = new Point(104, 22), AutoSize = true,
                                      Font = new Font("Segoe UI Semibold", 22f), ForeColor = Text1 });
@@ -148,14 +154,29 @@ namespace OmniBotsSetup
         void Append(string line, Color color)
         {
             if (InvokeRequired) { BeginInvoke(new Action<string, Color>(Append), line, color); return; }
+            try { File.AppendAllText(LogFile, line + Environment.NewLine, Encoding.UTF8); } catch { }
             log.SelectionStart = log.TextLength;
             log.SelectionColor = color;
             log.AppendText(line + Environment.NewLine);
             log.ScrollToCaret();
         }
 
+        public void Configure(string dir, bool noShortcut, bool noBrowser)
+        {
+            if (!string.IsNullOrEmpty(dir)) folder.Text = dir;
+            if (noShortcut) shortcut.Checked = false;
+            if (noBrowser) browser.Checked = false;
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            if (Auto) Run();
+        }
+
         void Run()
         {
+            try { File.WriteAllText(LogFile, "OmniBots Setup " + Info.InstallerVersion + " for OmniBots " + Info.AppVersion + " (" + Info.Commit + ")" + Environment.NewLine, Encoding.UTF8); } catch { }
             install.Enabled = browse.Enabled = folder.Enabled = shortcut.Enabled = browser.Enabled = winget.Enabled = false;
             log.Clear();
             status.Text = "Installing… this takes a few minutes the first time.";
@@ -200,6 +221,8 @@ namespace OmniBotsSetup
 
         void Done(bool ok, string why)
         {
+            ExitCode = ok ? 0 : 1;
+            Append(ok ? "DONE: OmniBots " + Info.AppVersion + " is installed in " + installedDir : "FAILED: " + why, ok ? Cyan : Color.Salmon);
             if (ok) {
                 status.Text = "OmniBots " + Info.AppVersion + " is installed.";
                 status.ForeColor = Color.FromArgb(58, 208, 122);
@@ -212,6 +235,7 @@ namespace OmniBotsSetup
                 install.Enabled = browse.Enabled = folder.Enabled = shortcut.Enabled = browser.Enabled = winget.Enabled = true;
             }
             Cleanup();
+            if (Auto) Close();
         }
 
         void Launch()
@@ -235,11 +259,20 @@ namespace OmniBotsSetup
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            if (argv.Length > 0 && argv[0] == "--version") {
-                Console.WriteLine("OmniBots Setup " + Info.InstallerVersion + " (OmniBots " + Info.AppVersion + ")");
-                return;
+            string dir = null;
+            bool noShortcut = false, noBrowser = false, auto = false;
+            for (int i = 0; i < argv.Length; i++) {
+                string a = argv[i].ToLowerInvariant();
+                if (a == "--dir" && i + 1 < argv.Length) dir = argv[++i];
+                else if (a == "--no-shortcut") noShortcut = true;
+                else if (a == "--no-browser") noBrowser = true;
+                else if (a == "--auto") auto = true;
             }
-            Application.Run(new SetupForm());
+            var form = new SetupForm();
+            form.Configure(dir, noShortcut, noBrowser);
+            form.Auto = auto;
+            Application.Run(form);
+            Environment.ExitCode = auto ? form.ExitCode : 0;
         }
     }
 }

@@ -58,7 +58,7 @@ def main() -> int:
         icon = ROOT / "omnibots" / "ui" / "assets" / "omi.ico"
         cmd = [str(CSC), "/nologo", "/target:winexe", "/optimize+", f"/out:{out}", f"/win32icon:{icon}",
                "/r:System.Windows.Forms.dll", "/r:System.Drawing.dll",
-               f"/resource:{ROOT / 'install.ps1'},install.ps1", f"/resource:{bundle},omnibots.bundle", f"/resource:{icon},omi.ico",
+               f"/resource:{ROOT / 'install.ps1'},install.ps1", f"/resource:{bundle},omnibots.bundle", f"/resource:{icon},omi.ico", f"/resource:{ROOT / 'omnibots' / 'ui' / 'assets' / 'omi_256.png'},omi.png",
                str(ROOT / "installer" / "OmniBotsSetup.cs"), str(tmp / "Version.cs")]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
