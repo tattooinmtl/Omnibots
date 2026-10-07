@@ -79,3 +79,6 @@ secrets.*
 *.pfx
 *.p12
 credentials*.json
+
+# the Windows installer build (installer/build.py)
+/dist/

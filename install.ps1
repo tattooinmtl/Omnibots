@@ -23,11 +23,13 @@ param(
     [switch]$NoShortcut,
     [switch]$NoBrowser,
     [switch]$Yes,           # answer "yes" to installing missing Python/Git with winget
-    [string]$Source = "https://github.com/tattooinmtl/Omnibots.git"   # (for testing: a local clone)
+    [string]$Source = "https://github.com/tattooinmtl/Omnibots.git"   # or a local clone / a git bundle (the Windows installer)
 )
 
 $ErrorActionPreference = "Stop"
 $Repo = $Source
+$GitHub = "https://github.com/tattooinmtl/Omnibots.git"
+$FromGitHub = ($Repo -eq $GitHub)
 
 function Say($text, $color = "Cyan") { Write-Host "  $text" -ForegroundColor $color }
 function Fail($text) { Write-Host "`n  X $text`n" -ForegroundColor Red; throw $text }
@@ -81,7 +83,13 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 Say ("Git: " + (git --version))
 
 # 2. download or update
-if (Test-Path (Join-Path $InstallDir ".git")) {
+if ((Test-Path (Join-Path $InstallDir ".git")) -and -not $FromGitHub) {
+    # the Windows installer: the code it carries (a git bundle) moves this install forward, fast-forward only
+    Say "Updating OmniBots in $InstallDir from the installer"
+    git -C $InstallDir fetch --quiet $Repo $Branch
+    if ($LASTEXITCODE -eq 0) { git -C $InstallDir merge --quiet --ff-only FETCH_HEAD }
+    if ($LASTEXITCODE -ne 0) { Fail "Couldn't update (local changes in $InstallDir, or it's newer than this installer). Nothing was changed." }
+} elseif (Test-Path (Join-Path $InstallDir ".git")) {
     Say "Updating OmniBots in $InstallDir"
     git -C $InstallDir fetch --quiet origin $Branch
     git -C $InstallDir checkout --quiet $Branch
@@ -106,6 +114,10 @@ if (Test-Path (Join-Path $InstallDir ".git")) {
     Say "Downloading OmniBots into $InstallDir"
     git clone --quiet --branch $Branch $Repo $InstallDir
     if ($LASTEXITCODE -ne 0) { Fail "git clone failed." }
+}
+if (-not $FromGitHub -and $Repo -match '\.bundle$') {
+    # installed from the Windows installer's bundle: later updates (About -> Update, or the install line) come from GitHub
+    git -C $InstallDir remote set-url origin $GitHub
 }
 
 # 3. its own Python environment + dependencies
