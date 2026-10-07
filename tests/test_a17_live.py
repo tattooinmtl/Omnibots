@@ -198,3 +198,47 @@ def test_live_omi_keeps_a_journal_and_proposes_goals(tmp_path):
     assert did.get("journal") and "netlify" in journal[0]["entry"].lower(), journal
     assert len(pending) == len(made) <= 2
     assert [p["id"] for p in projects] == ["p1"]                     # nothing started by itself
+
+
+def test_live_bot_models_and_renders_in_blender(tmp_path):
+    """Blender must be running with its MCP add-on server (OmniOne's config: http://127.0.0.1:8765/mcp). The bot gets
+    Blender's tools from OmniOne's MCP config over HTTP, renders, and looks at its own render."""
+    import socket
+    try:
+        socket.create_connection(("127.0.0.1", 8765), 1).close()
+    except OSError:
+        pytest.skip("Blender's MCP server isn't running")
+    from omnibots.mcp_client import omnione_servers
+    assert "blender" in omnione_servers()
+    out, answer, console, cards, proj = live_bot(
+        tmp_path, ["mcp:blender", "describe_image", "list_dir"],
+        "In Blender: add a red cube named BotCube at the origin, then render the scene to an image you can see, look "
+        "at the render with describe_image, and answer in one line what the render shows.", iterations=20)
+    joined = "\n".join(console)
+    assert "mcp blender." in joined, joined[-3000:]
+    renders = list(proj.rglob("*.png")) + list(proj.rglob("*.jpg"))
+    print("RENDERS:", renders)
+    assert renders, "the render must land in the project (live 2026-10-07 it landed in Blender's own folder)"
+    assert any("describe_image" in c and "outside" not in c for c in console)
+    assert out.status == "completed" and "cube" in answer.lower(), answer
+
+
+def test_live_github_reads_the_real_repository(tmp_path):
+    """Read-only, with the gh CLI's own login (writes are covered by the stand-in API in test_a17_coding)."""
+    import asyncio, shutil, subprocess
+    from omnibots.runtime.github_tools import github_tools
+    from omnibots.runtime.tools import ToolContext
+    if not shutil.which("gh"):
+        pytest.skip("gh not installed")
+    token = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True).stdout.strip()
+    if not token:
+        pytest.skip("gh is not logged in")
+    tools = {t.name: t for t in github_tools(lambda: token)}
+    ctx = ToolContext(bot_id="b", workspace=tmp_path)
+    info = asyncio.run(tools["github_repo"].fn({"repo": "tattooinmtl/Omnibots"}, ctx))
+    prs = asyncio.run(tools["github_pull_requests"].fn({"repo": "tattooinmtl/Omnibots", "state": "closed", "limit": 5}, ctx))
+    one = asyncio.run(tools["github_pull_requests"].fn({"repo": "tattooinmtl/Omnibots", "number": 23}, ctx))
+    print(info, prs, one[:600], sep="\n")
+    assert "tattooinmtl/Omnibots" in info and "default branch: master" in info
+    assert "#23" in prs and "[closed]" in prs
+    assert "TattooAI/repo-cleanup → master" in one and "files:" in one

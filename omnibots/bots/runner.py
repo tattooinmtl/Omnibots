@@ -201,6 +201,9 @@ class JobRunner:
             from omnibots.runtime.computer_tools import computer_tools
             for t in computer_tools(self.computers):
                 reg.add(t)
+        from omnibots.runtime.github_tools import github_tools      # A17.f.04: the token is the vault's github_token
+        for t in github_tools(lambda: self.vault.value("github_token") if self.vault is not None else None):
+            reg.add(t)
         if self.forge is not None:
             from omnibots.orchestrator.forge import forge_tool
             reg.add(forge_tool(self.forge))

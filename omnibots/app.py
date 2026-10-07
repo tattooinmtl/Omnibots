@@ -59,6 +59,9 @@ def main(argv: list[str] | None = None) -> int:
         import ctypes
 
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OmniBots.App")
+    if QApplication.instance() is None:                # A17.f.01: the live preview (QtWebEngine) needs shared GL contexts
+        from PySide6.QtCore import QCoreApplication, Qt as _Qt
+        QCoreApplication.setAttribute(_Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("OmniBots")
     from omnibots.ui.omi_icon import omi_icon

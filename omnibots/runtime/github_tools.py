@@ -84,7 +84,7 @@ def github_tools(token: Callable[[], str | None],
         else:
             state = str(args.get("state") or "open")
             data = await call("GET", f"/repos/{repo}/issues", params={"state": state, "per_page": min(100, int(args.get("limit") or 30))})
-            text = "\n".join(f"#{i['number']} {'PR ' if i.get('pull_request') else ''}{i['title']} [{i['state']}] "
+            text = "\n".join(f"#{i['number']} {'PR ' if 'pull_request' in i else ''}{i['title']} [{i['state']}] "
                              f"by {i['user']['login']}, {i.get('comments', 0)} comments" for i in data) or f"(no {state} issues)"
         ctx.saw_outside = True
         return wrap(text, source=f"GitHub: {repo} issues")

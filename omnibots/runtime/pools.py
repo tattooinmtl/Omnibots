@@ -7,12 +7,22 @@ from pathlib import Path
 from typing import Any, Callable
 
 from omnibots.lineup import LINEUP_MODELS, MINIMAX
-from omnibots.mcp_client import MCPManager
+from omnibots.mcp_client import MCPManager, omnione_servers, own_servers
 from omnibots.runtime.create_tools import create_tools
 from omnibots.runtime.eyes import eye_tools
 from omnibots.runtime.research import research_tool
 from omnibots.runtime.minimax_tools import minimax_tools
 from omnibots.runtime.skill_tools import SkillPool
+
+
+def omnione_blender_skills() -> list[Path]:
+    """OmniOne's Blender skills (HD render, lighting, materials, camera moves, modeling, product shots), read-only,
+    for bots that work in Blender through its MCP server (A17.f.03)."""
+    root = Path.home() / ".omnione" / "app" / "skills"
+    try:
+        return sorted(p for p in root.glob("blender-*") if (p / "SKILL.md").is_file())
+    except OSError:
+        return []
 
 
 def _openai(cfg: Any):
@@ -37,10 +47,12 @@ def runner_pools(config: Callable[[], Any], home: Path, router, locks=None, mcp_
     return {
         "locks": locks,
         "skill_pool": SkillPool(lambda: (cfg().skills if cfg() else []), home / "skills",
-                                [Path(f) for f in (skill_folders or []) if f]),
+                                [Path(f) for f in (skill_folders or []) if f] + omnione_blender_skills()),
         "media_tools": minimax_tools(lambda: (cfg().providers.get(MINIMAX) if cfg() else None), vision_chat=vision_chat)
                        + eye_tools(vision_chat, home)
                        + [research_tool(vision_chat)]
                        + create_tools(lambda: (cfg().providers.get(MINIMAX) if cfg() else None), lambda: _openai(cfg()), home),
-        "mcp": MCPManager(lambda: (cfg().mcp_servers if cfg() else {}), mcp_risk),
+        # Omni's MCP servers, plus OmniBots' own in ~/.omnibots/mcp.json (A17.f.02); Omni's entry wins a clash
+        # and OmniOne's (read-only: Blender over HTTP, A17.f.03)
+        "mcp": MCPManager(lambda: {**omnione_servers(), **own_servers(home), **(cfg().mcp_servers if cfg() else {})}, mcp_risk),
     }

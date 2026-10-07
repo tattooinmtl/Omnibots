@@ -221,7 +221,19 @@ class EditorTab(QWidget):
             self.text.setTabStopDistance(4 * self.text.fontMetrics().horizontalAdvance(" "))
             self.text.setStyleSheet(f"QPlainTextEdit {{ background: {theme.BG1}; color: {theme.TEXT}; border: none; padding: 10px; }}")
             self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-            lay.addWidget(self.text)
+            self.preview = None
+            from omnibots.ui.preview import PreviewPane, can_preview
+            if can_preview(self.path):                     # A17.f.01: code left, the live page right
+                from PySide6.QtWidgets import QSplitter
+                split = QSplitter(Qt.Orientation.Horizontal)
+                split.addWidget(self.text)
+                self.preview = PreviewPane(self.path)
+                split.addWidget(self.preview)
+                split.setSizes([520, 480])
+                lay.addWidget(split)
+                self.text.textChanged.connect(lambda: self.preview.show_text(self.text.toPlainText()))
+            else:
+                lay.addWidget(self.text)
             self.highlighter = Highlighter(self.text.document(), LANG.get(self.path.suffix.lower(), "") if self.path else "")
             self.text.document().modificationChanged.connect(self.dirty_changed.emit)
             QShortcut(QKeySequence("Escape"), self.find_bar, activated=self._close_find)
@@ -250,6 +262,8 @@ class EditorTab(QWidget):
             raise ValueError(f"{self.path.name} looks like a binary file")
         self.text.setPlainText(data.decode("utf-8", errors="replace"))
         self.text.document().setModified(False)
+        if getattr(self, "preview", None) is not None:      # opened, or a bot changed it on disk: show it now
+            self.preview.show_text(self.text.toPlainText(), now=True)
 
     def save(self, path: Path | None = None) -> Path:
         if self.text is None:
@@ -263,6 +277,9 @@ class EditorTab(QWidget):
             self.highlighter.setDocument(None)
             self.highlighter = Highlighter(self.text.document(), LANG.get(target.suffix.lower(), ""))
         self.text.document().setModified(False)
+        if getattr(self, "preview", None) is not None:
+            self.preview.path = target
+            self.preview.show_text(self.text.toPlainText(), now=True)
         return target
 
     # Find

@@ -77,6 +77,8 @@ TOOL_ACTIONS = {
     "computer_screenshot": "looking", "watch_video": "looking", "camera_snapshot": "looking",
     "generate_image": "filming", "edit_image": "filming", "generate_music": "filming", "clone_voice": "speaking",
     "make_document": "writing", "research": "searching",
+    "github_repos": "browsing", "github_repo": "browsing", "github_issues": "reading", "github_pull_requests": "reading",
+    "github_create_issue": "deploying", "github_comment": "chatting", "github_pull_request": "deploying",
 }
 
 

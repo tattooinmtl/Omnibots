@@ -57,6 +57,7 @@ class PreviewPane(QWidget):
         try:
             from PySide6.QtWebEngineWidgets import QWebEngineView
             self.view = QWebEngineView(self)
+            self.view.loadFinished.connect(self._loaded)
             lay.addWidget(self.view, 1)
         except Exception as exc:                            # no QtWebEngine: say so, the button still works
             msg = QLabel(f"The live preview needs QtWebEngine ({type(exc).__name__}). Use “Open in browser”.")
@@ -66,6 +67,10 @@ class PreviewPane(QWidget):
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self._flush)
+
+    def _loaded(self, ok: bool) -> None:
+        self.status.setText(f"Live preview · {self.path.name}" if ok else
+                            "The preview couldn't load here (the browser engine didn't start). Use “Open in browser”.")
 
     def show_text(self, text: str, now: bool = False) -> None:
         self._pending = text
