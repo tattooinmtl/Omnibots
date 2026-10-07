@@ -33,7 +33,7 @@ KNOWN_TOOLS = {
     "describe_image", "text_to_speech", "generate_video", "watch_video", "camera_snapshot",
     "generate_image", "edit_image", "generate_music", "clone_voice", "list_voices", "make_document", "research",
     "github_repos", "github_repo", "github_issues", "github_pull_requests", "github_create_issue", "github_comment",
-    "github_pull_request",
+    "github_pull_request", "pc_check", "pc_fix", "board_list", "board_run",
     "browser_navigate", "browser_read", "browser_screenshot", "browser_click",
     "browser_type", "browser_fill_secret", "browser_press", "create_tool",
     "computer_start", "computer_stop", "computer_run", "computer_upload", "computer_download",

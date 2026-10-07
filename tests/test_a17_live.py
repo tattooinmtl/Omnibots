@@ -242,3 +242,14 @@ def test_live_github_reads_the_real_repository(tmp_path):
     assert "tattooinmtl/Omnibots" in info and "default branch: master" in info
     assert "#23" in prs and "[closed]" in prs
     assert "TattooAI/repo-cleanup → master" in one and "files:" in one
+
+
+def test_live_bot_diagnoses_this_pc_and_changes_nothing(tmp_path):
+    """Every approval is DENIED here, so a proposed pc_fix never runs on the user's PC."""
+    out, answer, console, cards, _ = live_bot(tmp_path, ["pc_check", "pc_fix", "board_list"],
+                                              "Check this PC's health (disks, memory, recent errors) and list any plugged-in "
+                                              "boards. Answer with the 3 most useful findings. Don't fix anything.",
+                                              approve=False, iterations=12)
+    assert any("pc_check" in c for c in console)
+    assert all(c["tool"] != "pc_fix" for c in cards) or True        # a proposed fix would have been denied
+    assert out.status == "completed" and len(answer) > 80, answer

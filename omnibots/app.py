@@ -231,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
             return {"ok": False, "error": "proposal needs --id <proposal> and --text accept|reject"}
         return later(engine.decide_proposal(pid, verb == "accept"), lambda r: {"ok": True, "proposal": r}, timeout=20)
 
+    def cmd_connectors(_msg):                         # A17.h: Telegram / Discord status and the pairing code
+        return later(engine.ui_connectors(), lambda r: {"ok": True, "connectors": r}, timeout=10)
+
     def cmd_journal(_msg):
         return later(engine.ui_journal(14), lambda r: {"ok": True, "journal": r}, timeout=10)
 
@@ -259,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
          "pause": team_cmd("pause"), "resume": team_cmd("resume"), "halt": team_cmd("stop"), "start": team_cmd("start"),
          "restart": team_cmd("restart"), "panic": lambda m: later(engine.team.stop(panic=True), lambda r: {"ok": True, **r}, timeout=60),
          "pause_bot": team_cmd("pause_bot"), "resume_bot": team_cmd("resume_bot"), "stop_bot": team_cmd("stop_bot"),
-         "preapprove": cmd_preapprove, "budget": cmd_budget, "rate": cmd_rate, "ceiling": cmd_ceiling, "proposals": cmd_proposals, "proposal": cmd_proposal, "journal": cmd_journal, "snapshot": cmd_snapshot, "tray": cmd_tray},
+         "preapprove": cmd_preapprove, "budget": cmd_budget, "rate": cmd_rate, "ceiling": cmd_ceiling, "proposals": cmd_proposals, "proposal": cmd_proposal, "journal": cmd_journal, "connectors": cmd_connectors, "snapshot": cmd_snapshot, "tray": cmd_tray},
     )
     if not instance.acquire():
         reply = send_command({"cmd": "show"})

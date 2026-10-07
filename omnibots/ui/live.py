@@ -209,6 +209,10 @@ class LiveUI(QObject):
         for a in (approvals.list_pending() if approvals is not None else []):
             if a.get("bot_id") == bot_id or bot_id == "omi":
                 self.cards.setdefault(str(a["id"]), []).append(w.chat.add_approval(a, self.decide))
+        if bot_id == "omi" and hasattr(self.engine, "ui_connectors"):      # A17.h: a phone still to pair
+            self._later(self.engine.ui_connectors(), lambda cs, err: [
+                self.on_alert({"kind": "connector_pair", "connector": c["name"], "code": c["pair_code"]})
+                for c in (cs or []) if c.get("pair_code")] if not err else None)
         if bot_id == "omi" and hasattr(self.engine, "ui_proposals"):        # A17.e.01: ideas waiting in the inbox
             self._later(self.engine.ui_proposals(), lambda props, err: [self.show_proposal(p) for p in (props or [])] if not err else None)
         if bot_id == "omi" and getattr(w, "own_strip", None) is not None and hasattr(self.engine, "ui_background_today"):
@@ -435,6 +439,10 @@ class LiveUI(QObject):
 
     # ── approvals you can see (A11.e.01) ──────────────────────────────────
     def on_alert(self, a: dict[str, Any]) -> None:
+        if a.get("kind") == "connector_pair" and "omi" in self.windows:             # A17.h: pair the phone
+            self.windows["omi"].chat.add(ChatMessage("bot", f"{a.get('connector')} is connected. To talk to me from your phone, "
+                                                            f"send this to your bot once:  /pair {a.get('code')}"))
+            return
         if a.get("kind") == "approval_request":
             self.show_approval(a)
         elif a.get("kind") == "approval_decision":

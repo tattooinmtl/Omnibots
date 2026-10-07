@@ -187,6 +187,9 @@ def core_registry() -> ToolRegistry:
     from omnibots.runtime.hosting import hosting_tools          # deploy_site (R3) + check_domain (A10.c.01)
     for t in hosting_tools():
         reg.add(t)
+    from omnibots.runtime.hardware import hardware_tools          # pc_check, pc_fix, board_list, board_run (A17.g)
+    for t in hardware_tools():
+        reg.add(t)
     from omnibots.runtime.make_docs import doc_tools               # make_document: docx, pptx, xlsx, pdf (A17.b.05)
     for t in doc_tools():
         reg.add(t)

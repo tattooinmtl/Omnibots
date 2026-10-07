@@ -100,6 +100,19 @@ every_hours = 24
 max_pending = 3
 journal = true
 
+[telegram]
+# PLAN.md A17.h.01: talk to the team from your phone (or web.telegram.org). Put your bot's token (from @BotFather)
+# in the vault as telegram_bot_token, then send "/pair <code>" to your bot: Omi shows the code. The paired chat id is
+# saved here; only that chat is obeyed. enabled = false turns it off.
+enabled = true
+owner_chat_id = ""
+
+[discord]
+# PLAN.md A17.h.02: the same in a Discord direct message. Token in the vault as discord_bot_token; your own Discord
+# user id here (Developer Mode → right-click yourself → Copy User ID).
+enabled = true
+owner_user_id = ""
+
 [camera]
 # PLAN.md A17.a.03: the camera camera_snapshot uses (every picture asks you first).
 # source = "url" with url = "http://<camera-ip>/capture" (an ESP32 CameraWebServer, or any JPEG/MJPEG address

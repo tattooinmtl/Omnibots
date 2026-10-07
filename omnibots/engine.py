@@ -285,6 +285,8 @@ class Engine:
         self.spawn(self.presence.run(), name="presence")
         self.spawn(self._carry_on_after_restart(), name="carry-on")         # A15.d.02
         self.spawn(self._forward_board(), name="board-to-ui")
+        self.bridges: list = []
+        self.spawn(self._start_connectors(), name="connectors")             # A17.h: Telegram, Discord
         if self.home is not None:
             self.spawn(self._upkeep(), name="backup-and-housekeeping")      # A16.c
         self.accepting = True
@@ -452,6 +454,45 @@ class Engine:
         while True:
             m = await sub.get()
             self.signals.board_message.emit(message_dict(m))
+
+    async def _start_connectors(self) -> None:
+        """A17.h: a connector starts only when its token is in the vault (and it isn't switched off)."""
+        from omnibots.connectors.bridge import save_setting_owner
+        from omnibots.settings import load_settings
+        try:
+            st = load_settings(self.home / "settings.toml")
+        except Exception:
+            st = {}
+        tg, dc = st.get("telegram") or {}, st.get("discord") or {}
+        token = self.vault.value("telegram_bot_token") if self.vault else None
+        if token and tg.get("enabled", True):
+            from omnibots.connectors.telegram import TelegramBridge
+            b = TelegramBridge(self, token, owner=str(tg.get("owner_chat_id") or "") or None,
+                               save_owner=save_setting_owner(self.home, "telegram", "owner_chat_id"))
+            self.bridges.append(b)
+            self.spawn(b.run(), name="telegram")
+            if not b.owner:
+                self.signals.alert.emit({"kind": "connector_pair", "connector": "Telegram", "code": b.pair_code})
+        token = self.vault.value("discord_bot_token") if self.vault else None
+        if token and dc.get("enabled", True):
+            from omnibots.connectors.discord import DiscordBridge
+            b = DiscordBridge(self, token, owner=str(dc.get("owner_user_id") or "") or None)
+            self.bridges.append(b)
+            self.spawn(b.run(), name="discord")
+        if not self.bridges:
+            return
+        sub = await self.bus.subscribe()
+        while True:
+            m = message_dict(await sub.get())
+            for b in list(self.bridges):
+                try:
+                    await b.on_board(m)
+                except Exception:
+                    log.exception("%s: couldn't forward a board message", b.name)
+
+    async def ui_connectors(self) -> list[dict[str, Any]]:
+        return [{"name": b.name, "paired": bool(b.owner), "pair_code": None if b.owner else b.pair_code,
+                 "account": (b.me or {}).get("username")} for b in getattr(self, "bridges", [])]
 
     def _bot_listener(self, ev: dict[str, Any]) -> None:
         """Every bot event: remember the bot's latest state (for the tray groups), then on to the windows."""

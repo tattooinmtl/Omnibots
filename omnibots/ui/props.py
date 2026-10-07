@@ -79,6 +79,7 @@ TOOL_ACTIONS = {
     "make_document": "writing", "research": "searching",
     "github_repos": "browsing", "github_repo": "browsing", "github_issues": "reading", "github_pull_requests": "reading",
     "github_create_issue": "deploying", "github_comment": "chatting", "github_pull_request": "deploying",
+    "pc_check": "reviewing", "pc_fix": "running", "board_list": "searching", "board_run": "running",
 }
 
 
