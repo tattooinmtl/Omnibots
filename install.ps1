@@ -37,8 +37,9 @@ $FromGitHub = ($Repo -eq $GitHub)
 function Say($text, $color = "Cyan") { Write-Host "  $text" -ForegroundColor $color }
 function Fail($text) { Write-Host "`n  X $text`n" -ForegroundColor Red; throw $text }
 
-function Ask($question) {
-    if ($Yes) { return $true }
+function Ask($question, [switch]$NotByYes) {
+    # -Yes answers the winget questions only; closing a running OmniBots needs a person's answer or -StopRunning
+    if ($Yes -and -not $NotByYes) { return $true }
     try { $a = Read-Host "  $question [y/N]" } catch { return $false }
     return $a -match '^(y|yes|o|oui)$'
 }
@@ -108,7 +109,7 @@ $oldPy = Join-Path $InstallDir ".venv\Scripts\python.exe"
 if ($before -and (Test-Path $oldPy)) {
     Say "OmniBots $before is installed here: updating it"
     if (Test-Running $oldPy) {
-        if (-not ($StopRunning -or (Ask "OmniBots is running. Close it now to update? (Bots' work carries on after the update.)"))) {
+        if (-not ($StopRunning -or (Ask "OmniBots is running. Close it now to update? (Bots' work carries on after the update.)" -NotByYes))) {
             Fail "Close OmniBots first (tray -> Quit), then run this again. Nothing was changed."
         }
         Say "Closing OmniBots"

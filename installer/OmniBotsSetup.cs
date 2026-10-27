@@ -175,6 +175,17 @@ namespace OmniBotsSetup
             } catch { return false; }
         }
 
+        // While it runs the choices can't change. Not Enabled = false: Windows draws a disabled checkbox's text dark grey,
+        // unreadable on the navy background; the boxes just stop taking clicks and dim a little instead.
+        void Lock(bool on)
+        {
+            foreach (var c in new[] { shortcut, browser, winget }) {
+                c.AutoCheck = !on;
+                c.ForeColor = on ? Dim : Text1;
+                c.Cursor = on ? Cursors.Default : Cursors.Hand;
+            }
+        }
+
         CheckBox MakeCheck(string text, Point at, bool on)
         {
             var c = new CheckBox { Text = text, Location = at, AutoSize = true, Checked = on, ForeColor = Text1 };
@@ -237,7 +248,8 @@ namespace OmniBotsSetup
                 }
             }
             try { File.WriteAllText(LogFile, "OmniBots Setup " + Info.InstallerVersion + " for OmniBots " + Info.AppVersion + " (" + Info.Commit + ")" + Environment.NewLine, Encoding.UTF8); } catch { }
-            install.Enabled = browse.Enabled = folder.Enabled = shortcut.Enabled = browser.Enabled = winget.Enabled = false;
+            install.Enabled = browse.Enabled = folder.Enabled = false;
+            Lock(true);
             log.Clear();
             status.Text = "Installing… this takes a few minutes the first time.";
             work = Path.Combine(Path.GetTempPath(), "OmniBotsSetup-" + Guid.NewGuid().ToString("N").Substring(0, 8));
@@ -262,7 +274,9 @@ namespace OmniBotsSetup
                 RedirectStandardInput = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
             };
             psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
-            Append((installedVersion == null ? "Installing OmniBots " + Info.AppVersion + " into " : "Updating OmniBots " + installedVersion + " -> " + Info.AppVersion + " in ") + installedDir, Cyan);
+            Append((installedVersion == null ? "Installing OmniBots " + Info.AppVersion + " into "
+                    : installedVersion == Info.AppVersion ? "Checking and repairing OmniBots " + Info.AppVersion + " in "
+                    : "Updating OmniBots " + installedVersion + " -> " + Info.AppVersion + " in ") + installedDir, Cyan);
             proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.OutputDataReceived += delegate(object s, DataReceivedEventArgs e) { if (e.Data != null) Append(e.Data, Text1); };
             proc.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e) { if (e.Data != null) Append(e.Data, Color.FromArgb(255, 170, 120)); };
@@ -298,7 +312,8 @@ namespace OmniBotsSetup
                 install.Text = "Try again";
                 CheckExisting();
                 install.Text = "Try again";
-                install.Enabled = browse.Enabled = folder.Enabled = shortcut.Enabled = browser.Enabled = winget.Enabled = true;
+                install.Enabled = browse.Enabled = folder.Enabled = true;
+                Lock(false);
             }
             Cleanup();
             if (Auto) Close();
