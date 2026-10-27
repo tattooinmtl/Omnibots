@@ -4,8 +4,12 @@
 // as a git bundle (so it installs exactly the version printed on it, even offline from GitHub) and Omi's icon. It
 // shows what install.ps1 does, live, and offers to start OmniBots at the end. Later updates come from GitHub as usual.
 //
+// Run it again to update: it sees the version already in the folder ("Update 0.11.1 -> 0.12.0"), asks to close a
+// running OmniBots, and install.ps1 backs up the database and updates the code, the dependencies and the browser.
+//
 // Silent install (also how it is tested): OmniBots-Setup.exe --dir "D:\OmniBots" --no-shortcut --no-browser --auto
 // --auto starts at once and closes itself when done; the exit code is install.ps1's; the log is %TEMP%\OmniBots-Setup.log.
+// --stop-running lets a silent update close a running OmniBots (without it, a silent update stops and changes nothing).
 //
 // Built by installer/build.py with the C# compiler that ships with Windows (.NET Framework 4.x), so it runs on any
 // Windows 10/11 without installing anything first. C# 5: no string interpolation, no "=>" members.
@@ -16,6 +20,7 @@ using System.Drawing;
 using System.IO;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("OmniBots Setup")]
@@ -47,8 +52,10 @@ namespace OmniBotsSetup
         CheckBox shortcut, browser, winget;
         Button install, browse, launch, close;
         RichTextBox log;
-        Label status;
+        Label status, found;
         Process proc;
+        string installedVersion;                            // the OmniBots already in the folder, or null
+        public bool StopRunning;                            // --stop-running
         string work;
         string installedDir;
         public bool Auto;                                   // --auto: install at once, close when done
@@ -89,8 +96,8 @@ namespace OmniBotsSetup
                 if (d.ShowDialog(this) == DialogResult.OK) folder.Text = d.SelectedPath;
             };
             Controls.Add(browse);
-            Controls.Add(new Label { Text = "Already installed there? It's updated in place: your bots, projects and settings stay.",
-                                     Location = new Point(30, 206), AutoSize = true, ForeColor = Dim, Font = new Font("Segoe UI", 9f) });
+            found = new Label { Location = new Point(30, 206), AutoSize = true, ForeColor = Dim, Font = new Font("Segoe UI", 9f) };
+            Controls.Add(found);
 
             shortcut = MakeCheck("Add OmniBots to the Start menu", new Point(30, 236), true);
             browser = MakeCheck("Install the bots' web browser (Chromium, about 150 MB)", new Point(30, 262), true);
@@ -113,6 +120,8 @@ namespace OmniBotsSetup
             install = MakeButton("Install", new Point(560, 534), new Size(170, 36), true);
             install.Click += delegate { Run(); };
             Controls.Add(install);
+            folder.TextChanged += delegate { CheckExisting(); };
+            CheckExisting();
             FormClosing += delegate(object s, FormClosingEventArgs e) {
                 if (proc != null && !proc.HasExited) {
                     if (MessageBox.Show(this, "The install is still running. Stop it?", "OmniBots Setup", MessageBoxButtons.YesNo) != DialogResult.Yes) {
@@ -123,6 +132,47 @@ namespace OmniBotsSetup
                 }
                 Cleanup();
             };
+        }
+
+        static string VersionIn(string dir)
+        {
+            try {
+                string init = Path.Combine(dir, "omnibots", "__init__.py");
+                if (!File.Exists(init)) return null;
+                var m = Regex.Match(File.ReadAllText(init), @"__version__\s*=\s*""([^""]+)""");
+                return m.Success ? m.Groups[1].Value : null;
+            } catch { return null; }
+        }
+
+        void CheckExisting()
+        {
+            installedVersion = VersionIn(folder.Text.Trim());
+            if (installedVersion == null) {
+                found.Text = "A new install. Your bots' data in .omnibots, if any, stays as it is.";
+                install.Text = "Install";
+            } else if (installedVersion == Info.AppVersion) {
+                found.Text = "OmniBots " + installedVersion + " is already here: Repair checks and fixes everything (your bots, projects and settings stay).";
+                install.Text = "Repair";
+            } else {
+                found.Text = "OmniBots " + installedVersion + " is here: it's updated to " + Info.AppVersion + " in place (your bots, projects and settings stay).";
+                install.Text = "Update";
+            }
+            found.ForeColor = installedVersion == null ? Dim : Cyan;
+        }
+
+        // Is the OmniBots in this folder running? (its own --send status: 0 = it answered)
+        static bool IsRunning(string dir)
+        {
+            string py = Path.Combine(dir, ".venv", "Scripts", "python.exe");
+            if (!File.Exists(py)) return false;
+            try {
+                var p = Process.Start(new ProcessStartInfo(py, "-m omnibots --send status") {
+                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                    WorkingDirectory = dir });
+                p.StandardOutput.ReadToEnd();
+                if (!p.WaitForExit(30000)) { try { p.Kill(); } catch { } return false; }
+                return p.ExitCode == 0;
+            } catch { return false; }
         }
 
         CheckBox MakeCheck(string text, Point at, bool on)
@@ -176,6 +226,16 @@ namespace OmniBotsSetup
 
         void Run()
         {
+            string target = folder.Text.Trim();
+            bool stop = StopRunning;
+            if (VersionIn(target) != null && IsRunning(target)) {
+                if (!Auto) {
+                    if (MessageBox.Show(this, "OmniBots is running. Close it now and update?" + Environment.NewLine + Environment.NewLine
+                                        + "Bots' work is cut off and carries on by itself after the update.",
+                                        "OmniBots Setup", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+                    stop = true;
+                }
+            }
             try { File.WriteAllText(LogFile, "OmniBots Setup " + Info.InstallerVersion + " for OmniBots " + Info.AppVersion + " (" + Info.Commit + ")" + Environment.NewLine, Encoding.UTF8); } catch { }
             install.Enabled = browse.Enabled = folder.Enabled = shortcut.Enabled = browser.Enabled = winget.Enabled = false;
             log.Clear();
@@ -196,12 +256,13 @@ namespace OmniBotsSetup
             if (!shortcut.Checked) args.Append(" -NoShortcut");
             if (!browser.Checked) args.Append(" -NoBrowser");
             if (winget.Checked) args.Append(" -Yes");
+            if (stop) args.Append(" -StopRunning");
             var psi = new ProcessStartInfo("powershell.exe", args.ToString()) {
                 UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
                 RedirectStandardInput = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
             };
             psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
-            Append("Installing OmniBots " + Info.AppVersion + " into " + installedDir, Cyan);
+            Append((installedVersion == null ? "Installing OmniBots " + Info.AppVersion + " into " : "Updating OmniBots " + installedVersion + " -> " + Info.AppVersion + " in ") + installedDir, Cyan);
             proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
             proc.OutputDataReceived += delegate(object s, DataReceivedEventArgs e) { if (e.Data != null) Append(e.Data, Text1); };
             proc.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e) { if (e.Data != null) Append(e.Data, Color.FromArgb(255, 170, 120)); };
@@ -222,15 +283,20 @@ namespace OmniBotsSetup
         void Done(bool ok, string why)
         {
             ExitCode = ok ? 0 : 1;
-            Append(ok ? "DONE: OmniBots " + Info.AppVersion + " is installed in " + installedDir : "FAILED: " + why, ok ? Cyan : Color.Salmon);
+            string doneText = installedVersion == null ? "OmniBots " + Info.AppVersion + " is installed."
+                            : installedVersion == Info.AppVersion ? "OmniBots " + Info.AppVersion + " is checked and repaired."
+                            : "OmniBots is updated: " + installedVersion + " -> " + Info.AppVersion + ".";
+            Append(ok ? "DONE: " + doneText + " (" + installedDir + ")" : "FAILED: " + why, ok ? Cyan : Color.Salmon);
             if (ok) {
-                status.Text = "OmniBots " + Info.AppVersion + " is installed.";
+                status.Text = doneText;
                 status.ForeColor = Color.FromArgb(58, 208, 122);
                 install.Visible = false;
                 launch.Visible = true;
             } else {
                 status.Text = why;
                 status.ForeColor = Color.FromArgb(255, 90, 110);
+                install.Text = "Try again";
+                CheckExisting();
                 install.Text = "Try again";
                 install.Enabled = browse.Enabled = folder.Enabled = shortcut.Enabled = browser.Enabled = winget.Enabled = true;
             }
@@ -260,17 +326,19 @@ namespace OmniBotsSetup
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             string dir = null;
-            bool noShortcut = false, noBrowser = false, auto = false;
+            bool noShortcut = false, noBrowser = false, auto = false, stopRunning = false;
             for (int i = 0; i < argv.Length; i++) {
                 string a = argv[i].ToLowerInvariant();
                 if (a == "--dir" && i + 1 < argv.Length) dir = argv[++i];
                 else if (a == "--no-shortcut") noShortcut = true;
                 else if (a == "--no-browser") noBrowser = true;
                 else if (a == "--auto") auto = true;
+                else if (a == "--stop-running") stopRunning = true;
             }
             var form = new SetupForm();
             form.Configure(dir, noShortcut, noBrowser);
             form.Auto = auto;
+            form.StopRunning = stopRunning;
             Application.Run(form);
             Environment.ExitCode = auto ? form.ExitCode : 0;
         }

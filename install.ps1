@@ -14,6 +14,8 @@
     3. makes its own Python environment ($InstallDir\.venv) and installs the dependencies there
     4. installs the browser the bots use (Chromium via Playwright) unless -NoBrowser
     5. adds a Start menu shortcut "OmniBots" (unless -NoShortcut)
+  Run it again to update: if OmniBots is running it asks to close it first (-StopRunning closes it without
+  asking), backs up the database, then updates the code, the dependencies and the browser in one go.
   Your settings, bots and projects live in %USERPROFILE%\.omnibots (git ignores them) and your output folder: an
   install or update never touches them.
 #>
@@ -23,6 +25,7 @@ param(
     [switch]$NoShortcut,
     [switch]$NoBrowser,
     [switch]$Yes,           # answer "yes" to installing missing Python/Git with winget
+    [switch]$StopRunning,   # an update while OmniBots runs: close it without asking (the Windows installer asks itself)
     [string]$Source = "https://github.com/tattooinmtl/Omnibots.git"   # or a local clone / a git bundle (the Windows installer)
 )
 
@@ -50,6 +53,23 @@ function Find-Python {
         if ($v -and [version]$v -ge [version]"3.12") { return ,@($exe, $arg) }
     }
     return $null
+}
+
+function Installed-Version($dir) {
+    $init = Join-Path $dir "omnibots\__init__.py"
+    if (-not (Test-Path $init)) { return $null }
+    $m = Select-String -Path $init -Pattern '__version__\s*=\s*"([^"]+)"' | Select-Object -First 1
+    if ($m) { return $m.Matches[0].Groups[1].Value }
+    return $null
+}
+
+function Test-Running($vpy) {
+    # the running app answers on its pipe; "not running" is exit code 4
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $vpy -m omnibots --send status 2>&1 | Out-Null; return ($LASTEXITCODE -eq 0) }
+    catch { return $false }
+    finally { $ErrorActionPreference = $old }
 }
 
 function Refresh-Path {
@@ -82,13 +102,44 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 }
 Say ("Git: " + (git --version))
 
-# 2. download or update
+# 2. an update: close the running app (asked first), back up the database
+$before = Installed-Version $InstallDir
+$oldPy = Join-Path $InstallDir ".venv\Scripts\python.exe"
+if ($before -and (Test-Path $oldPy)) {
+    Say "OmniBots $before is installed here: updating it"
+    if (Test-Running $oldPy) {
+        if (-not ($StopRunning -or (Ask "OmniBots is running. Close it now to update? (Bots' work carries on after the update.)"))) {
+            Fail "Close OmniBots first (tray -> Quit), then run this again. Nothing was changed."
+        }
+        Say "Closing OmniBots"
+        $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        & $oldPy -m omnibots --send stop 2>&1 | Out-Null
+        $ErrorActionPreference = $old
+        $waited = 0
+        while ((Test-Running $oldPy) -and $waited -lt 90) { Start-Sleep -Seconds 2; $waited += 2 }
+        if (Test-Running $oldPy) { Fail "OmniBots didn't close. Quit it from the tray, then run this again. Nothing was changed." }
+        Start-Sleep -Seconds 2                          # let it release its files
+    }
+    $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $saved = & $oldPy -c "from omnibots.backup import backup_closed; from omnibots.paths import resolve_home; print(backup_closed(resolve_home(), 'before-update') or '')" 2>$null
+    $ErrorActionPreference = $old
+    if ($LASTEXITCODE -eq 0 -and $saved) { Say "Backed up your bots' database: $saved" }
+    elseif ($LASTEXITCODE -ne 0) { Say "The backup before the update didn't work; your data isn't touched by an update, so it goes on." "Yellow" }
+}
+
+# 3. download or update the code
 if ((Test-Path (Join-Path $InstallDir ".git")) -and -not $FromGitHub) {
     # the Windows installer: the code it carries (a git bundle) moves this install forward, fast-forward only
-    Say "Updating OmniBots in $InstallDir from the installer"
     git -C $InstallDir fetch --quiet $Repo $Branch
-    if ($LASTEXITCODE -eq 0) { git -C $InstallDir merge --quiet --ff-only FETCH_HEAD }
-    if ($LASTEXITCODE -ne 0) { Fail "Couldn't update (local changes in $InstallDir, or it's newer than this installer). Nothing was changed." }
+    if ($LASTEXITCODE -ne 0) { Fail "Couldn't read the code this installer carries. Nothing was changed." }
+    git -C $InstallDir merge-base --is-ancestor FETCH_HEAD HEAD
+    if ($LASTEXITCODE -eq 0) {
+        Say "The code here already has this version (or newer): checking everything else"
+    } else {
+        Say "Updating the code from the installer"
+        git -C $InstallDir merge --quiet --ff-only FETCH_HEAD
+        if ($LASTEXITCODE -ne 0) { Fail "Couldn't update: $InstallDir has changes of its own that this installer doesn't have. Nothing was changed." }
+    }
 } elseif (Test-Path (Join-Path $InstallDir ".git")) {
     Say "Updating OmniBots in $InstallDir"
     git -C $InstallDir fetch --quiet origin $Branch
@@ -120,7 +171,7 @@ if (-not $FromGitHub -and $Repo -match '\.bundle$') {
     git -C $InstallDir remote set-url origin $GitHub
 }
 
-# 3. its own Python environment + dependencies
+# 4. its own Python environment + dependencies
 $venv = Join-Path $InstallDir ".venv"
 $vpy = Join-Path $venv "Scripts\python.exe"
 if (-not (Test-Path $vpy)) {
@@ -137,20 +188,20 @@ if ($LASTEXITCODE -ne 0) { Fail "Installing the dependencies failed (see the mes
 & $vpy -m pip install --quiet --no-deps -e $InstallDir
 if ($LASTEXITCODE -ne 0) { Fail "Installing OmniBots failed (see the messages above)." }
 
-# 4. the browser the bots use
+# 5. the browser the bots use
 if (-not $NoBrowser) {
     Say "Installing the bots' browser (Chromium)"
     & $vpy -m playwright install chromium 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Say "The browser didn't install; the bots' browser tools will be off. Run: $vpy -m playwright install chromium" "Yellow" }
 }
 
-# 5. the doctor: creates OmniBots' folders and settings, upgrades the database, and when Omni isn't
+# 6. the doctor: creates OmniBots' folders and settings, upgrades the database, and when Omni isn't
 #    installed, OmniBots' own provider config in ~/.omnibots\config (keys go in encrypted, via Settings -> Providers)
 Say "Checking the setup (doctor)"
 & $vpy -m omnibots.doctor
 if ($LASTEXITCODE -ne 0) { Say "The doctor found something to fix (see above). Run it again any time: $vpy -m omnibots.doctor" "Yellow" }
 
-# 6. a Start menu shortcut
+# 7. a Start menu shortcut
 $version = (& $vpy -c "import omnibots; print(omnibots.__version__)" 2>$null)
 if (-not $NoShortcut) {
     $lnk = Join-Path ([Environment]::GetFolderPath("Programs")) "OmniBots.lnk"
@@ -165,7 +216,9 @@ if (-not $NoShortcut) {
 }
 
 Write-Host ""
-Write-Host "  OmniBots $version is installed." -ForegroundColor Green
+if ($before -and $before -ne $version) { Write-Host "  OmniBots updated: $before -> $version." -ForegroundColor Green }
+elseif ($before) { Write-Host "  OmniBots $version is up to date (checked and repaired)." -ForegroundColor Green }
+else { Write-Host "  OmniBots $version is installed." -ForegroundColor Green }
 Say ($(if ($NoShortcut) { "Start it with:  " } else { "Start it from the Start menu (OmniBots), or run:  " }) + "$vpy -m omnibots") "Gray"
 Say "Update any time by running the same install line again." "Gray"
 Write-Host ""
