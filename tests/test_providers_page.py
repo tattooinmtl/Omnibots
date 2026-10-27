@@ -211,7 +211,7 @@ def test_the_page_edits_the_shared_file_and_hides_the_key(tmp_path):
     assert _read(path)["theme"] == "dark"
 
     window = SettingsWindow(omni_settings=path)
-    assert window.tabs.count() == 4                      # Folders, Bots && icons, Providers, Doctor (A16.d.02)
+    assert window.tabs.count() == 5                      # Folders, Bots && icons, Providers, Tokens (A9.c.04), Doctor (A16.d.02)
     assert window.tabs.tabText(2) == "Providers"
     plain = SettingsWindow()
     assert plain.tabs.tabText(2) == "Providers"

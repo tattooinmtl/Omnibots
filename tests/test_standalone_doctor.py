@@ -280,7 +280,7 @@ def test_settings_has_a_doctor_tab_that_shows_the_report(pc):
     loc = resolve_location("", pc)
     w = SettingsWindow(omni_settings=loc.settings_file)
     names = [w.tabs.tabText(i) for i in range(w.tabs.count())]
-    assert names[-2:] == ["Providers", "Doctor"]
+    assert names[-3:] == ["Providers", "Tokens", "Doctor"]
     page = DoctorPage(home=pc)
     page._work(True, False)                              # the worker body, run inline
     html = report_html(run_doctor(home=pc, fix=False, groups=OFFLINE).to_dict())

@@ -211,6 +211,8 @@ def _main(argv: list[str]) -> int:
     s.add_argument("--hosts", default="", help="comma-separated hosts this secret may be sent to")
     s.add_argument("--note", default="")
     s.add_argument("--kind", default="token")
+    s.add_argument("--clipboard", action="store_true",
+                   help="take the value from the clipboard (then clear it) instead of typing it")
     sub.add_parser("list")
     d = sub.add_parser("delete")
     d.add_argument("name")
@@ -224,7 +226,17 @@ def _main(argv: list[str]) -> int:
         await v.load()
         try:
             if a.cmd == "set":
-                value = getpass.getpass(f"value for {a.name} (not shown): ")
+                if a.clipboard:
+                    # some consoles can't paste into a hidden prompt; the value is still never shown
+                    import subprocess
+                    ps = ["powershell", "-NoProfile", "-Command"]
+                    value = subprocess.run(ps + ["Get-Clipboard -Raw"], capture_output=True, text=True).stdout.strip()
+                    subprocess.run(ps + ["Set-Clipboard -Value ' '"], capture_output=True)
+                    if not value:
+                        print("the clipboard is empty: copy the value first")
+                        return 1
+                else:
+                    value = getpass.getpass(f"value for {a.name} (not shown): ")
                 info = await v.set(a.name, value, kind=a.kind, note=a.note, hosts=a.hosts.split(","))
                 print(f"saved {info.name}" + (f" (only for {', '.join(info.hosts)})" if info.hosts else " (any host)"))
             elif a.cmd == "list":
