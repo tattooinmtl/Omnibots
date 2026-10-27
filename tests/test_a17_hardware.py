@@ -79,7 +79,9 @@ def test_writing_to_a_board_always_asks_reading_and_compiling_dont():
     assert w("arduino-cli", "upload -p COM5 --fqbn esp32:esp32:esp32 sketch") == "R5"
     assert w("pio", "run -t upload") == "R5"
     assert w("mpremote", "connect COM5 ls") == "R1" and w("esptool", "--port COM5 chip-id") == "R1"
-    assert w("arduino-cli", "compile --fqbn esp32:esp32:esp32 sketch") == "R1" and w("pio", "run") == "R1"
+    assert w("arduino-cli", "compile --fqbn esp32:esp32:esp32 sketch") == "R1"
+    # security audit 2026-10-27: `pio run` runs the project's extra_scripts and platform builders (Python) on this PC
+    assert w("pio", "run") == "R5" and w("pio", "device list") == "R1"
     assert writes_board("mpremote", "devs") is False
 
 

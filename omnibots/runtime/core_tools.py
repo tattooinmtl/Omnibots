@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from omnibots.security.untrusted import FILE, wrap
-from omnibots.runtime.sandbox import PY_FLAGS, sandbox_python
+from omnibots.runtime.sandbox import PY_FLAGS, sandbox_python, uncontained_risk
 from omnibots.runtime.tools import Tool, ToolContext, ToolRegistry
 
 MAX_READ = 60_000
@@ -179,7 +179,7 @@ def core_registry() -> ToolRegistry:
     reg.add(Tool(
         "run_python", "Run Python in the sandbox, with your project folder as the working directory (relative paths like index.html work), and return its output. Give either `code` or the `path` of a .py file in your workspace. Leaving the project folder asks the user. No network guarantees; no secrets are available.",
         {"type": "object", "properties": {"code": {"type": "string"}, "path": {"type": "string"}, "timeout_seconds": {"type": "integer"}}},
-        "R1", run_python, timeout=320, path_arg=None,
+        "R1", run_python, timeout=320, path_arg=None, classify=lambda a, c: uncontained_risk(c),
         summary=lambda a: f"run_python {a.get('path') or '<code>'}"))
     from omnibots.runtime.web_tools import web_tools           # R2: read the web (no login)
     for t in web_tools():

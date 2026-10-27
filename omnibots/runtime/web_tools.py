@@ -36,13 +36,20 @@ from omnibots.security.untrusted import WEB, begin, wrap  # noqa: E402  (A16.a)
 UNTRUSTED = begin(WEB)          # kept for imports; wrap() adds the end line and defuses fake markers (A16.a)
 
 
+NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
 def blocked_reason(ip: str) -> str | None:
     try:
-        addr = ipaddress.ip_address(ip)
+        addr = ipaddress.ip_address(ip.split("%", 1)[0])
     except ValueError:
         return None
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
-        return blocked_reason(str(addr.ipv4_mapped))
+    if isinstance(addr, ipaddress.IPv6Address):
+        # an IPv4 address carried inside IPv6 (mapped, 6to4, Teredo, NAT64) is judged as that IPv4 address
+        inner = addr.ipv4_mapped or addr.sixtofour or (addr.teredo[1] if addr.teredo else None) or (
+            ipaddress.IPv4Address(int(addr) & 0xFFFFFFFF) if addr in NAT64 else None)
+        if inner is not None:
+            return blocked_reason(str(inner))
     if addr.is_loopback:
         return "loopback"
     if addr.is_link_local:
@@ -51,19 +58,24 @@ def blocked_reason(ip: str) -> str | None:
         return "private"
     if addr.is_unspecified or (isinstance(addr, ipaddress.IPv4Address) and addr.packed[0] == 0):
         return "this-network"
+    if addr.is_multicast or addr.is_reserved or not addr.is_global:
+        return "non-public"                           # carrier-grade NAT (100.64/10), benchmarking, multicast, …
     return None
 
 
-async def assert_public_url(url: str, allow_loopback: bool = False) -> None:
+async def assert_public_url(url: str, allow_loopback: bool = False) -> str | None:
+    """Raises unless every address the host resolves to is public. Returns the address to connect to (the one that
+    was checked; None for localhost), so the caller can pin it: a host that answers a public address now and a
+    private one a moment later (DNS rebinding) never gets its second answer used."""
     u = urlparse(url)
     if u.scheme not in ("http", "https"):
         raise ValueError(f"unsupported protocol: {u.scheme or '(none)'}")
     host = (u.hostname or "").strip("[]")
     if not host:
         raise ValueError("URL has no host")
-    if host.lower() == "localhost":
+    if host.lower() == "localhost" or host.lower().endswith(".localhost"):
         if allow_loopback:
-            return
+            return None
         raise ValueError("refusing to fetch localhost (pass allow_internal:true to read a local dev server)")
     try:
         ipaddress.ip_address(host)
@@ -74,24 +86,50 @@ async def assert_public_url(url: str, allow_loopback: bool = False) -> None:
         except OSError:
             raise ValueError(f"could not resolve host: {host}")
         addrs = sorted({i[4][0] for i in infos})
+    if not addrs:
+        raise ValueError(f"could not resolve host: {host}")
     for a in addrs:
         why = blocked_reason(a)
         if why == "loopback" and allow_loopback:
             continue
         if why:
             raise ValueError(f"refusing to fetch: {host} resolves to a {why} address ({a})")
+    return addrs[0]
 
 
-async def safe_get(client: httpx.AsyncClient, url: str, *, allow_loopback: bool = False, max_redirects: int = 5) -> httpx.Response:
-    current = url
+def _origin(url: str) -> tuple[str, str, int | None]:
+    u = urlparse(url)
+    return u.scheme.lower(), (u.hostname or "").lower(), u.port or {"http": 80, "https": 443}.get(u.scheme.lower())
+
+
+def pinned(url: str, ip: str | None) -> tuple[str, dict[str, str], dict[str, Any]]:
+    """The URL to request with the checked address in place of the name, the Host header, and the TLS name."""
+    u = urlparse(url)
+    host = (u.hostname or "").strip("[]")
+    if ip is None or ip == host:
+        return url, {}, {}
+    addr = f"[{ip}]" if ":" in ip else ip
+    netloc = addr + (f":{u.port}" if u.port else "")
+    hdr = {"Host": host + (f":{u.port}" if u.port else "")}
+    return u._replace(netloc=netloc).geturl(), hdr, ({"sni_hostname": host} if u.scheme == "https" else {})
+
+
+async def safe_get(client: httpx.AsyncClient, url: str, *, allow_loopback: bool = False, max_redirects: int = 5,
+                   headers: dict[str, str] | None = None) -> httpx.Response:
+    """GET with the SSRF guard on every hop. `headers` (they may hold a secret) go only to the first URL's origin:
+    a redirect to another host never receives them. The final URL is `res.extensions["omnibots_url"]`."""
+    current, first = url, _origin(url)
     for hop in range(max_redirects + 1):
-        await assert_public_url(current, allow_loopback=allow_loopback and hop == 0)
-        res = await client.get(current, follow_redirects=False)
+        ip = await assert_public_url(current, allow_loopback=allow_loopback and hop == 0)
+        target, host_hdr, ext = pinned(current, ip)
+        hdrs = {**(dict(headers or {}) if _origin(current) == first else {}), **host_hdr}
+        res = await client.get(target, headers=hdrs, follow_redirects=False, extensions=ext)
         if res.status_code in (301, 302, 303, 307, 308) and res.headers.get("location"):
             if hop == max_redirects:
                 raise ValueError("too many redirects")
             current = urljoin(current, res.headers["location"])
             continue
+        res.extensions["omnibots_url"] = current
         return res
     raise ValueError("too many redirects")
 
@@ -196,9 +234,7 @@ async def web_fetch(args: dict[str, Any], ctx: ToolContext) -> str:
     try:
         headers = {str(k): str(v) for k, v in args["headers"].items()} if isinstance(args.get("headers"), dict) else {}
         async with _client() as c:
-            if headers:
-                c.headers.update(headers)
-            res = await safe_get(c, url, allow_loopback=bool(args.get("allow_internal")))
+            res = await safe_get(c, url, allow_loopback=bool(args.get("allow_internal")), headers=headers)
     except (ValueError, httpx.HTTPError) as exc:
         return f"ERROR: web_fetch: {exc}"
     if res.status_code >= 400:
@@ -208,7 +244,7 @@ async def web_fetch(args: dict[str, Any], ctx: ToolContext) -> str:
     if len(text) > cap:
         text = text[:cap] + "\n…[truncated]"
     ctx.saw_outside = True
-    return wrap(text, source=str(res.url))
+    return wrap(text, source=str(res.extensions.get("omnibots_url") or url))
 
 
 async def rehearse_fetch(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:

@@ -104,6 +104,13 @@ class Sandbox:
     def level(self) -> str:
         return "S0+AppContainer" if self._container() else "S0"
 
+    @property
+    def contained(self) -> bool:
+        try:
+            return self._container() is not None
+        except RuntimeError:
+            return False
+
     def new_run_dir(self, bot_id: str) -> Path:
         d = self.root / bot_id / f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
         d.mkdir(parents=True, exist_ok=True)
@@ -244,3 +251,10 @@ class Sandbox:
             await asyncio.wait_for(proc.wait(), 10)
         except asyncio.TimeoutError:
             pass
+
+
+def uncontained_risk(ctx) -> str:
+    """R5 (the user approves each run) when code would run without the AppContainer: plain S0 runs as the user, with
+    their files and network (security audit 2026-10-27: the fallback used to run bots' commands unasked)."""
+    sb = getattr(ctx, "sandbox", None)
+    return "R5" if sb is not None and not sb.contained else "R0"

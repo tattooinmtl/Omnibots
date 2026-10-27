@@ -153,7 +153,9 @@ class MCPManager:
             ctx.runs.append({"command": f"mcp__{server}__{t.name} {json.dumps(args, ensure_ascii=False)}",
                              "tool": f"mcp__{server}__{t.name}", "exit_code": 1 if failed else 0, "timed_out": False,
                              "output": text[-8000:]})
-            return ("ERROR: " if failed else "") + text
+            # another program's output is data, never instructions, like a web page (security audit 2026-10-27)
+            from omnibots.security.untrusted import MCP, wrap
+            return ("ERROR: " if failed else "") + wrap(text, kind=MCP, source=f"mcp {server}.{t.name}")
 
         schema = getattr(t, "input_schema", None) or getattr(t, "inputSchema", None) or {"type": "object", "properties": {}}
         return Tool(f"mcp__{server}__{t.name}", f"[MCP {server}] {(t.description or t.name)[:900]} (Runs in another program: "

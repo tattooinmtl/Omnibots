@@ -24,6 +24,53 @@ def can_preview(path: Path | None) -> bool:
     return bool(path) and path.suffix.lower() in PREVIEW_EXT
 
 
+def preview_allows(url: str, root: Path) -> bool:
+    """What a previewed page may load (security audit 2026-10-27). The page is often a bot's work, built from web
+    text, so it runs locked in: files from its own folder (its css, images, scripts) and inline data, nothing else.
+    Before, it could read any file on the PC through file:// and send it out by navigating to a web address."""
+    u = QUrl(url)
+    scheme = u.scheme().lower()
+    if scheme in ("data", "blob", "about", "qrc"):
+        return True
+    if scheme != "file":
+        return False
+    try:
+        return Path(u.toLocalFile()).resolve().is_relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def locked_view(parent, root: Path):
+    """A QWebEngineView whose page loads nothing remote and no file outside `root`, opens no windows and never
+    navigates away from the preview itself (a clicked link does nothing)."""
+    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings, QWebEngineUrlRequestInterceptor
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+
+    class Guard(QWebEngineUrlRequestInterceptor):
+        def interceptRequest(self, info) -> None:
+            if not preview_allows(info.requestUrl().toString(), root):
+                info.block(True)
+
+    class Page(QWebEnginePage):
+        def acceptNavigationRequest(self, url, nav_type, is_main_frame) -> bool:
+            return preview_allows(url.toString(), root) and nav_type != QWebEnginePage.NavigationType.NavigationTypeLinkClicked
+
+        def createWindow(self, _type):
+            return None
+
+    view = QWebEngineView(parent)
+    page = Page(view)
+    page.guard = Guard(page)
+    page.setUrlRequestInterceptor(page.guard)
+    s = page.settings()
+    s.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
+    s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, False)
+    s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, False)
+    s.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, False)
+    view.setPage(page)
+    return view
+
+
 def html_for(path: Path, text: str) -> str:
     """What the browser shows for this file's (possibly unsaved) text."""
     suffix = path.suffix.lower()
@@ -55,8 +102,7 @@ class PreviewPane(QWidget):
         lay.addLayout(bar)
         self.view = None
         try:
-            from PySide6.QtWebEngineWidgets import QWebEngineView
-            self.view = QWebEngineView(self)
+            self.view = locked_view(self, path.parent)
             self.view.loadFinished.connect(self._loaded)
             lay.addWidget(self.view, 1)
         except Exception as exc:                            # no QtWebEngine: say so, the button still works

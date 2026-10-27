@@ -134,7 +134,8 @@ def test_an_http_mcp_server_works_like_a_local_one(tmp_path, http_mcp):
     tools, info, added, shot = asyncio.run(go())
     assert tools["mcp__scene__scene_info"].risk == "R0"              # readOnlyTools (OmniOne's format)
     assert tools["mcp__scene__add_cube"].risk == "R3"                # anything else asks, as before
-    assert info == "Cube, Camera, Light" and added == "added Box"
+    # an MCP server's output reaches the model wrapped as data (security audit 2026-10-27)
+    assert info.splitlines()[2] == "Cube, Camera, Light" and added.splitlines()[2] == "added Box"
     saved = list((tmp_path / "mcp").glob("scene-render-*.png"))
     assert saved and saved[0].read_bytes() == PNG and "describe_image" in shot
 

@@ -15,8 +15,21 @@ from xml.etree import ElementTree as ET
 DOC_SUFFIXES = {".pdf", ".docx", ".xlsx", ".xlsm", ".pptx"}
 MAX_PAGES = 300
 MAX_ROWS = 2000                      # per sheet
+MAX_MEMBER = 64 * 1024 * 1024        # one XML part, unpacked: a small zip can unpack to gigabytes
 
-_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+def _member(z: zipfile.ZipFile, name: str) -> bytes:
+    """A part of an Office file, refused when it unpacks to more than MAX_MEMBER (security audit 2026-10-27)."""
+    if z.getinfo(name).file_size > MAX_MEMBER:
+        raise ValueError(f"{name} unpacks to more than {MAX_MEMBER // 2**20} MB")
+    with z.open(name) as f:
+        data = f.read(MAX_MEMBER + 1)
+    if len(data) > MAX_MEMBER:
+        raise ValueError(f"{name} unpacks to more than {MAX_MEMBER // 2**20} MB")
+    return data
+
+
+_W ="{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -77,7 +90,7 @@ def _pdf(path: Path) -> str:
 
 def _docx(path: Path) -> str:
     with zipfile.ZipFile(path) as z:
-        root = ET.fromstring(z.read("word/document.xml"))
+        root = ET.fromstring(_member(z, "word/document.xml"))
     body = root.find(f"{_W}body")
     lines: list[str] = []
     for block in (body if body is not None else []):
@@ -123,10 +136,10 @@ def _xlsx(path: Path) -> str:
         names = set(z.namelist())
         shared: list[str] = []
         if "xl/sharedStrings.xml" in names:
-            for si in ET.fromstring(z.read("xl/sharedStrings.xml")).iter(f"{_S}si"):
+            for si in ET.fromstring(_member(z, "xl/sharedStrings.xml")).iter(f"{_S}si"):
                 shared.append("".join(t.text or "" for t in si.iter(f"{_S}t")))
-        wb = ET.fromstring(z.read("xl/workbook.xml"))
-        rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+        wb = ET.fromstring(_member(z, "xl/workbook.xml"))
+        rels = ET.fromstring(_member(z, "xl/_rels/workbook.xml.rels"))
         target = {r.get("Id"): r.get("Target") for r in rels.iter(f"{_PR}Relationship")}
         out = ["(Excel workbook)"]
         for sheet in wb.iter(f"{_S}sheet"):
@@ -135,7 +148,7 @@ def _xlsx(path: Path) -> str:
             if part not in names:
                 continue
             out.append(f"--- sheet: {sheet.get('name')} ---")
-            rows = ET.fromstring(z.read(part)).iter(f"{_S}row")
+            rows = ET.fromstring(_member(z, part)).iter(f"{_S}row")
             for n, row in enumerate(rows):
                 if n >= MAX_ROWS:
                     out.append(f"…[more rows not read]")
@@ -167,7 +180,7 @@ def _pptx(path: Path) -> str:
                         key=lambda n: int(re.search(r"(\d+)\.xml$", n).group(1)))
         out = [f"(PowerPoint, {len(slides)} slides)"]
         for i, name in enumerate(slides, 1):
-            root = ET.fromstring(z.read(name))
+            root = ET.fromstring(_member(z, name))
             paras = []
             for p in root.iter(f"{_A}p"):
                 t = "".join(r.text or "" for r in p.iter(f"{_A}t")).strip()
@@ -176,7 +189,7 @@ def _pptx(path: Path) -> str:
             notes = f"ppt/notesSlides/notesSlide{re.search(r'(\d+)', name.rsplit('/', 1)[1]).group(1)}.xml"
             out.append(f"--- slide {i} ---\n" + "\n".join(paras))
             if notes in names:
-                nt = [("".join(r.text or "" for r in p.iter(f"{_A}t"))).strip() for p in ET.fromstring(z.read(notes)).iter(f"{_A}p")]
+                nt = [("".join(r.text or "" for r in p.iter(f"{_A}t"))).strip() for p in ET.fromstring(_member(z, notes)).iter(f"{_A}p")]
                 nt = [x for x in nt if x and not x.isdigit()]
                 if nt:
                     out.append("notes: " + " ".join(nt))

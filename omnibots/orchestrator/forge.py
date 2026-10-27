@@ -17,17 +17,52 @@ omnibots Tool) plus a `pytest` test file. The forge:
 
 Forged tools are then loaded into every bot's pool by name, exactly like a
 built-in, so the team reuses them.
+
+Forged code NEVER runs in OmniBots' own process (security audit 2026-10-27: the
+module used to be imported in-process before its tests and review, and the import
+ban is easy to get around with __import__, so a prompt-injected boss could run
+anything as the user). Reading its name/risk, testing it and every later call run
+in the sandbox; the pool gets a proxy built from the stored manifest.
 """
 
 from __future__ import annotations
 
 import ast
+import asyncio
+import json
 import logging
 import re
 from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+RESULT_MARK = "@@OMNIBOTS-FORGED@@"
+# Runs inside the sandbox: imports the forged module from its folder (read-only), then describes it or calls it.
+RUNNER = """\
+import asyncio, importlib.util, inspect, json, os, sys
+from pathlib import Path
+src, folder, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, src)
+spec = importlib.util.spec_from_file_location("forged_tool", os.path.join(folder, "tool.py"))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+from omnibots.runtime.tools import Tool
+t = mod.build()
+if not isinstance(t, Tool):
+    out = {"error": "build() must return an omnibots Tool"}
+elif mode == "describe":
+    out = {"name": t.name, "description": t.description, "parameters": t.parameters, "risk": t.risk, "timeout": t.timeout}
+else:
+    class Ctx:
+        bot_id, workspace, job_id, runs, saw_outside = os.environ.get("OMNIBOTS_BOT", ""), Path.cwd(), None, [], False
+        async def event(self, kind, content): pass
+        def record_run(self, command, result): pass
+    args = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
+    r = t.fn(args, Ctx())
+    out = {"result": str(asyncio.run(r) if inspect.isawaitable(r) else r)}
+print("\\n" + %r + json.dumps(out))
+""" % RESULT_MARK
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{2,40}$")
 FORGEABLE_RISK = {"R0", "R1", "R2"}
@@ -62,40 +97,85 @@ class ToolForge:
         self.reviewer_chain = reviewer_chain or list(CHEAP_FIRST)
         self.dir = home / "forge"
 
-    # ── building a tool from a forged module ───────────────────────────────
-    def _load(self, name: str) -> Any:
-        import importlib.util
-        mod_path = self.dir / name / "tool.py"
-        spec = importlib.util.spec_from_file_location(f"omnibots_forge_{name}", mod_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        if not hasattr(module, "build"):
-            raise ForgeError("no build() in the module")
-        tool = module.build()
+    # ── running forged code: always in the sandbox ─────────────────────────
+    async def _sandboxed(self, name: str, mode: str, cwd: Path, args: dict[str, Any] | None = None,
+                         timeout: float = 120) -> dict[str, Any]:
+        from omnibots.runtime.sandbox import PY_FLAGS, sandbox_python
+        if not self.sandbox.contained:
+            raise ForgeError("forged tools only run in the AppContainer sandbox, and it isn't available on this PC")
+        folder, src = self.dir / name, self.code_snapshot()
+        run_dir = self.sandbox.new_run_dir(f"forge-{name}")
+        runner = run_dir / "_forged.py"
+        runner.write_text(RUNNER, encoding="utf-8")
+        argv = [sandbox_python(), *PY_FLAGS, str(runner), str(src), str(folder), mode]
+        if args is not None:
+            (run_dir / "call.json").write_text(json.dumps(args), encoding="utf-8")
+            argv.append(str(run_dir / "call.json"))
+        res = await self.sandbox.run(argv, cwd=cwd, timeout=timeout, grant=[run_dir], grant_read=[folder, src])
+        if res.timed_out:
+            raise ForgeError(f"{name} timed out after {timeout:g}s")
+        for line in reversed(res.output.splitlines()):
+            if line.startswith(RESULT_MARK):
+                out = json.loads(line[len(RESULT_MARK):])
+                if out.get("error"):
+                    raise ForgeError(out["error"])
+                return out
+        raise ForgeError(f"{name} failed in the sandbox (exit {res.exit_code}): {res.output[-1500:]}")
+
+    async def describe(self, name: str) -> dict[str, Any]:
+        """The forged tool's name, description, parameters, risk and timeout, read in the sandbox."""
+        return await self._sandboxed(name, "describe", self.dir / name)
+
+    def _proxy(self, name: str, m: dict[str, Any]) -> Any:
         from omnibots.runtime.tools import Tool
-        if not isinstance(tool, Tool):
-            raise ForgeError("build() must return an omnibots Tool")
-        return tool
+        timeout = float(m.get("timeout") or 120)
+
+        async def call(args: dict[str, Any], ctx) -> str:
+            out = await self._sandboxed(name, "call", Path(ctx.workspace), args, timeout=timeout)
+            return str(out.get("result", ""))
+        return Tool(name, str(m.get("description") or name), m.get("parameters") or {"type": "object", "properties": {}},
+                    str(m.get("risk") or "R2"), call, timeout=timeout + 30, path_arg=None)
 
     def load_active(self) -> list[Any]:
-        """Every promoted forged tool, for the runner's pool. A broken one is skipped, not fatal."""
+        """Every promoted forged tool, for the runner's pool, as a sandboxed proxy (nothing forged runs here)."""
         out = []
         try:
             rows = self._active_rows_sync()
         except Exception:
             return out
-        for name in rows:
+        for name, manifest in rows:
             try:
-                out.append(self._load(name))
-            except Exception as exc:
-                log.warning("forged tool %s failed to load: %s", name, exc)
+                m = json.loads(manifest or "{}")
+            except ValueError:
+                m = {}
+            if m.get("risk") not in FORGEABLE_RISK:
+                log.warning("forged tool %s has no sandbox manifest yet; skipped", name)
+                continue
+            out.append(self._proxy(name, m))
         return out
 
-    def _active_rows_sync(self) -> list[str]:
+    async def describe_missing(self) -> int:
+        """Tools forged before the sandboxed manifest existed: describe them once in the sandbox."""
+        n = 0
+        for name, manifest in await asyncio.to_thread(self._active_rows_sync):
+            if (manifest or "{}") != "{}":
+                continue
+            try:
+                m = await self.describe(name)
+            except Exception as exc:
+                log.warning("forged tool %s can't be described in the sandbox: %s", name, exc)
+                continue
+            if m.get("name") == name and m.get("risk") in FORGEABLE_RISK:
+                await self.db.write("UPDATE tools SET manifest_json=? WHERE name=? AND origin='forge'", (json.dumps(m), name))
+                n += 1
+        return n
+
+    def _active_rows_sync(self) -> list[tuple[str, str]]:
         import sqlite3
         con = sqlite3.connect(self.db.path)
         try:
-            return [r[0] for r in con.execute("SELECT name FROM tools WHERE origin='forge' AND status='active' AND enabled=1")]
+            return [(r[0], r[1]) for r in con.execute(
+                "SELECT name, manifest_json FROM tools WHERE origin='forge' AND status='active' AND enabled=1")]
         finally:
             con.close()
 
@@ -116,16 +196,17 @@ class ToolForge:
         (folder / "tool.py").write_text(code, encoding="utf-8", newline="\n")
         (folder / "test_tool.py").write_text(test_code, encoding="utf-8", newline="\n")
 
-        # it must import and build a Tool with a forgeable risk class
+        # it must import and build a Tool with a forgeable risk class: checked in the sandbox, never here
         try:
-            tool = self._load(name)
+            m = await self.describe(name)
         except Exception as exc:
             return {"ok": False, "stage": "load", "error": f"{type(exc).__name__}: {exc}"}
-        if tool.name != name:
-            return {"ok": False, "stage": "load", "error": f"build() returned a tool named {tool.name!r}, not {name!r}"}
-        if tool.risk not in FORGEABLE_RISK:
-            return {"ok": False, "stage": "risk", "error": f"a forged tool must be R0-R2; {name!r} declares {tool.risk}. "
+        if m.get("name") != name:
+            return {"ok": False, "stage": "load", "error": f"build() returned a tool named {m.get('name')!r}, not {name!r}"}
+        if m.get("risk") not in FORGEABLE_RISK:
+            return {"ok": False, "stage": "risk", "error": f"a forged tool must be R0-R2; {name!r} declares {m.get('risk')}. "
                     "Actions that touch the world (R3+) belong in a reviewed built-in."}
+        tool = self._proxy(name, m)
 
         # tests run in the sandbox
         test = await self._run_tests(name, folder)
@@ -141,8 +222,8 @@ class ToolForge:
             "INSERT INTO tools (id, name, description, risk_class, origin, manifest_json, status, created_by) "
             "VALUES (?,?,?,?, 'forge', ?, 'active', ?) "
             "ON CONFLICT(id) DO UPDATE SET description=excluded.description, risk_class=excluded.risk_class, "
-            "status='active', enabled=1",
-            (f"forge_{name}", name, description or tool.description, tool.risk, "{}", created_by))
+            "manifest_json=excluded.manifest_json, status='active', enabled=1",
+            (f"forge_{name}", name, description or tool.description, tool.risk, json.dumps(m), created_by))
         if self.bus:
             await self.bus.publish("#general", "TOOL_CREATED",
                                    {"text": f"forged tool {name} ({tool.risk}): {tool.description[:120]}",

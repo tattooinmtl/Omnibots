@@ -179,6 +179,27 @@ def writes_board(tool: str, args: str) -> bool:
     return bool(re.search(WRITES.get(tool, r"."), args))
 
 
+# Board tools run on this PC, outside the sandbox, so only calls known to just READ run without asking (security audit
+# 2026-10-27). Everything else asks: `pio run` executes the project's extra_scripts (Python the bot wrote),
+# `pio pkg exec -- <cmd>` runs any program, `arduino-cli compile --build-property recipe.hooks…` runs any command.
+_PORT = r"(?:COM\d{1,3}|/dev/\S+|auto|a\d|c\d|u\d)"
+_NAME = r"[A-Za-z0-9_][\w.:/\\-]*"
+READ_ONLY = {
+    "mpremote": re.compile(rf"(?:connect\s+{_PORT}\s+)?(?:devs|version|help|df|ls(?:\s+:?{_NAME})?|cat\s+:?{_NAME}"
+                           rf"|fs\s+(?:ls(?:\s+:?{_NAME})?|cat\s+:?{_NAME}|df))", re.I),
+    "esptool": re.compile(rf"(?:--chip\s+[\w-]+\s+)?(?:(?:-p|--port)\s+{_PORT}\s+)?(?:--chip\s+[\w-]+\s+)?(?:-b\s+\d+\s+|--baud\s+\d+\s+)?"
+                          r"(?:chip[-_]id|flash[-_]id|read[-_]mac|version|get[-_]security[-_]info)", re.I),
+    "arduino-cli": re.compile(r"version|board\s+(?:list|listall)(?:\s+[\w:\-]+)?|core\s+list|lib\s+list"
+                              rf"|compile\s+(?:--fqbn\s+[\w:\-]+\s+)?{_NAME}(?:\s+--fqbn\s+[\w:\-]+)?", re.I),
+    "pio": re.compile(r"--version|device\s+list|boards(?:\s+[\w-]+)?|system\s+info|pkg\s+list", re.I),
+}
+
+
+def board_call_reads_only(tool: str, args: str) -> bool:
+    rx = READ_ONLY.get(tool)
+    return bool(rx and rx.fullmatch(" ".join(str(args or "").split())))
+
+
 def hardware_tools() -> list[Tool]:
     async def pc_check(args: dict[str, Any], ctx: ToolContext) -> str:
         area = str(args.get("area") or "overview").lower()
@@ -233,7 +254,7 @@ def hardware_tools() -> list[Tool]:
         return f"exit code {code}\n{out[-MAX_OUT:]}"
 
     def board_risk(a: dict[str, Any], ctx) -> str:
-        return "R5" if writes_board(str(a.get("tool") or ""), str(a.get("args") or "")) else "R1"
+        return "R1" if board_call_reads_only(str(a.get("tool") or ""), str(a.get("args") or "")) else "R5"
 
     async def fix_card(a, c):
         return {"runs_on_this_pc": str(a.get("command") or ""), "as_administrator": bool(a.get("admin")), "why": str(a.get("why") or "")}

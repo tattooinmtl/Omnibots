@@ -12,13 +12,13 @@
 
 from __future__ import annotations
 
-import fnmatch
 import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from omnibots.runtime.tools import Tool, ToolContext
+from omnibots.runtime.sandbox import uncontained_risk
+from omnibots.runtime.tools import Tool, ToolContext, risk_max
 
 MAX_HITS = 200
 
@@ -85,10 +85,10 @@ def _inside(ctx: ToolContext, p: str | None) -> Path:
     return path
 
 
-def _files(root: Path, pattern: str = "*"):
-    for p in root.rglob("*"):
-        if p.is_file() and ".git" not in p.parts and fnmatch.fnmatch(p.name, pattern):
-            yield p
+def _files(root: Path, workspace: Path, pattern: str = "*"):
+    # never through a junction/symlink a bot made to a folder outside its workspace (security audit 2026-10-27)
+    from omnibots.security.paths import files_inside
+    yield from files_inside(root, workspace, pattern, skip_dirs={".git"})
 
 
 async def grep(args: dict[str, Any], ctx: ToolContext) -> str:
@@ -98,7 +98,7 @@ async def grep(args: dict[str, Any], ctx: ToolContext) -> str:
     except (ValueError, re.error) as exc:
         return f"ERROR: {exc}"
     hits = []
-    for f in (_files(root, str(args.get("glob") or "*")) if root.is_dir() else [root]):
+    for f in (_files(root, _ws(ctx), str(args.get("glob") or "*")) if root.is_dir() else [root]):
         try:
             for n, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                 if rx.search(line):
@@ -115,7 +115,7 @@ async def find_files(args: dict[str, Any], ctx: ToolContext) -> str:
         root = _inside(ctx, args.get("path"))
     except ValueError as exc:
         return f"ERROR: {exc}"
-    found = [p.relative_to(_ws(ctx)).as_posix() for p in _files(root, str(args.get("pattern") or "*"))][:MAX_HITS]
+    found = [p.relative_to(_ws(ctx)).as_posix() for p in _files(root, _ws(ctx), str(args.get("pattern") or "*"))][:MAX_HITS]
     return "\n".join(found) or "no files match"
 
 
@@ -207,7 +207,8 @@ def core_extra_tools() -> list[Tool]:
              summary=lambda a: f"find_files {a.get('pattern', '*')}"),
         Tool("run_shell", "Run a Windows shell (cmd) command in your workspace, with no secrets in its environment. Risky commands need the user's approval.",
              {"type": "object", "properties": {"command": s, "timeout_seconds": {"type": "integer"}}, "required": ["command"]},
-             "R1", run_shell, timeout=620, path_arg=None, classify=lambda a, c: command_risk(a.get("command", ""))[0],
+             "R1", run_shell, timeout=620, path_arg=None,
+             classify=lambda a, c: risk_max(command_risk(a.get("command", ""))[0], uncontained_risk(c)),
              rehearse=rehearse_shell,
              summary=lambda a: f"run_shell: {str(a.get('command', ''))[:80]}" + (
                  f" ({command_risk(a.get('command', ''))[1]})" if command_risk(a.get("command", ""))[0] != "R1" else "")),

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from html import escape
 
 from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
@@ -90,9 +91,10 @@ class ComputerWindow(QMainWindow):
 
     def _fail(self, msg: str) -> None:
         hint = ("<br><br><span style='font-size:13px'>The bot needs a computer login: on the VPS run "
-                f"<code>bots add {self.bot_id}</code> and store the secret as <code>computer_{self.bot_id}</code> "
+                f"<code>bots add {escape(self.bot_id)}</code> and store the secret as <code>computer_{escape(self.bot_id)}</code> "
                 "in the vault.</span>") if "no computer login" in msg else ""
-        self.web.setHtml(WAIT_PAGE.format(msg=f"✖ {msg}{hint}"))
+        # the error text can come from the server's answer: shown as text, never run as a page (security audit 2026-10-27)
+        self.web.setHtml(WAIT_PAGE.format(msg=f"✖ {escape(msg)}{hint}"))
         self.status.setText("Not connected")
 
     def _toggle(self) -> None:
