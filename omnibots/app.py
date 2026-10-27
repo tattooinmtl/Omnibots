@@ -40,6 +40,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--id", default="", help="bot id for --send tell/pause_bot/resume_bot/stop_bot")
     p.add_argument("--exit-after", type=float, default=0, metavar="SECONDS", help="exit cleanly after N seconds")
     p.add_argument("--no-window", action="store_true", help="don't show the main window")
+    p.add_argument("--minimized", action="store_true",
+                   help="start quietly in the tray: no intro, Omi's window hidden (Start with Windows, A11.q.01)")
     p.add_argument("--wait-pid", type=int, default=0, metavar="PID", help=argparse.SUPPRESS)   # a restart waits for the old instance
     p.add_argument("--version", action="version", version=f"omnibots {__version__}")
     return p.parse_args(argv)
@@ -265,12 +267,22 @@ def main(argv: list[str] | None = None) -> int:
          "preapprove": cmd_preapprove, "budget": cmd_budget, "rate": cmd_rate, "ceiling": cmd_ceiling, "proposals": cmd_proposals, "proposal": cmd_proposal, "journal": cmd_journal, "connectors": cmd_connectors, "snapshot": cmd_snapshot, "tray": cmd_tray},
     )
     if not instance.acquire():
+        if args.minimized:                                  # a sign-in start while one already runs: leave it be
+            log.info("another instance is running; --minimized start does nothing")
+            return ALREADY_RUNNING
         reply = send_command({"cmd": "show"})
         log.info("another instance is running; asked it to show (reply=%s)", reply)
         print("OmniBots is already running; brought its window to the front.")
         return ALREADY_RUNNING
 
     log.info("OmniBots %s starting (home=%s)", __version__, paths.home)
+    if sys.platform == "win32" and not os.environ.get("OMNIBOTS_HOME"):   # tests use a throwaway home: never touch the real entry
+        try:
+            from omnibots import autostart
+            if autostart.refresh():                         # Start with Windows still points at this install
+                log.info("start-with-Windows entry re-pointed at %s", sys.executable)
+        except Exception as exc:                            # noqa: BLE001 - never blocks a start
+            log.warning("start-with-Windows check failed: %s", exc)
     # A16.c.03: a restore chosen in the tray happens now, before the database is opened
     from omnibots.backup import apply_pending_restore
     restored = apply_pending_restore(paths.home, int(settings.get("backup", {}).get("keep", 7)))
@@ -292,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── engine + window ────────────────────────────────────────────────
     splash = None
-    if not args.no_window and args.exit_after <= 0 and settings["app"].get("splash", True):
+    if not args.no_window and not args.minimized and args.exit_after <= 0 and settings["app"].get("splash", True):
         # the launch intro, synced to the real startup (ui/splash.py)
         from PySide6.QtCore import QEventLoop
 
@@ -375,6 +387,8 @@ def main(argv: list[str] | None = None) -> int:
             tray.show()
             window.quit_on_close = False
             app.setQuitOnLastWindowClosed(False)
+            if args.minimized:
+                window.hide()                               # in the tray only; double-click Omi there to open it
             BotWindow.on_first_hide = lambda: tray.icon.showMessage(
                 "OmniBots is still running", "Your bots keep working. Click Omi in the tray for the menu, double-click to reopen.",
                 omi_icon(), 5000)

@@ -1,4 +1,4 @@
-"""Settings: Folders (A11.m.01), the Bots & icons legend (A11.d.05), Providers (A11.p.01), Tokens (A9.c.04) and Doctor (A16.d.02)."""
+"""Settings: Folders (A11.m.01), Startup (A11.q.01), the Bots & icons legend (A11.d.05), Providers (A11.p.01), Tokens (A9.c.04) and Doctor (A16.d.02)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from omnibots.ui.omi_face import render_face
 from omnibots.ui.props import ACTIONS, JOBS, badge_image
 from omnibots.ui.doctor_page import DoctorPage
 from omnibots.ui.providers_page import ProvidersPage
+from omnibots.ui.startup_page import StartupPage
 from omnibots.ui.tokens_page import TokensPage
 
 LEGEND_MOOD = {"coding": "working", "writing": "working", "running": "working", "reviewing": "working",
@@ -159,6 +160,8 @@ class SettingsWindow(QDialog):
         tabs = QTabWidget()
         self.folders = folders_tab(engine, settings_path)
         tabs.addTab(self.folders, "Folders")
+        self.startup = StartupPage()
+        tabs.addTab(self.startup, "Startup")
         tabs.addTab(icons_legend(), "Bots && icons")          # "&&" = a literal & (a single & marks a shortcut)
         self.providers = ProvidersPage(omni_settings, engine, autoload=omni_settings is not None)
         tabs.addTab(self.providers, "Providers")
@@ -175,3 +178,5 @@ class SettingsWindow(QDialog):
             self.providers.ensure_loaded()
         elif self.tabs.widget(index) is self.tokens:
             self.tokens.reload()
+        elif self.tabs.widget(index) is self.startup:
+            self.startup.reload()
