@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from omnibots.connectors.bridge import ChatBridge, Outgoing
+from omnibots.connectors.bridge import ChatBridge, Outgoing, safe_name
 
 log = logging.getLogger(__name__)
 API = "https://api.telegram.org"
@@ -74,7 +74,7 @@ class TelegramBridge(ChatBridge):
             r = await self._request("GET", f"{API}/file/bot{self.token}/{f['file_path']}")
             if r.status_code >= 400:
                 return None
-            out = self.files_dir / (name or Path(f["file_path"]).name)
+            out = self.files_dir / safe_name(name or Path(f["file_path"]).name)
             out.write_bytes(r.content)
             return out
         except (RuntimeError, httpx.HTTPError, KeyError):

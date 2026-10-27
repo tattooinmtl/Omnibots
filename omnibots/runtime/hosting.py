@@ -62,9 +62,10 @@ def site_files(workspace: Path, folder: str) -> tuple[Path, list[tuple[str, Path
         raise DeployError(f"no folder {folder!r} in your project")
     out: list[tuple[str, Path]] = []
     total = 0
-    for p in sorted(root.rglob("*")):
+    from omnibots.security.paths import files_inside      # never publishes through a link out of the project
+    for p in sorted(files_inside(root, ws)):
         rel = p.relative_to(root)
-        if not p.is_file() or any(part in SKIP_DIRS for part in rel.parts) or p.suffix in (".pyc", ".pyo"):
+        if any(part in SKIP_DIRS for part in rel.parts) or p.suffix in (".pyc", ".pyo"):
             continue
         if root == ws and len(rel.parts) == 1 and rel.name in SKIP_ROOT:
             continue

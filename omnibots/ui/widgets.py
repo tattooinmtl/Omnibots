@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
+from html import escape
 from pathlib import Path
 
 from PySide6.QtCore import QDir, QFileInfo, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
@@ -24,6 +25,13 @@ from omnibots.ui import theme
 from omnibots.ui.animator import FaceAnimator
 from omnibots.ui.omi_face import render_face
 from omnibots.ui.props import job_for_role
+
+
+def plain(label: QLabel) -> QLabel:
+    """A label that shows its text as text. A QLabel's default guesses: text that looks like HTML is rendered as HTML,
+    so a bot's message or command could hide words or fake a status on a card (security audit 2026-10-27)."""
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    return label
 
 
 # ── glass panel ─────────────────────────────────────────────────────────────
@@ -148,10 +156,10 @@ class IDCard(GlassPanel):
         lay.addWidget(self.face)
         info = QVBoxLayout()
         info.setSpacing(4)
-        self.name = QLabel(card.name)
+        self.name = plain(QLabel(card.name))
         self.name.setStyleSheet("font-size: 22px; font-weight: 600;")
         self.status = QLabel()
-        self.tagline = QLabel(card.tagline)
+        self.tagline = plain(QLabel(card.tagline))
         self.tagline.setObjectName("dim")
         self.tagline.setWordWrap(True)
         info.addStretch(1)
@@ -184,9 +192,9 @@ class IDCard(GlassPanel):
         c = self.card
         col = {"Online": theme.GREEN, "Working": theme.ACCENT_CYAN, "Paused": theme.AMBER,
                "Waiting": theme.AMBER, "Stopped": theme.TEXT_DIM, "Needs approval": theme.RED}.get(c.status, theme.GREEN)
-        self.status.setText(f"<span style='color:{col}'>●</span>&nbsp; {c.status}")
-        mood = f"<br><span style='color:{theme.ACCENT_CYAN}'>mood: {c.mood}</span>" if c.mood else ""
-        self.facts.setText(f"{c.role} · {c.seat}<br>{c.model}{mood}")
+        self.status.setText(f"<span style='color:{col}'>●</span>&nbsp; {escape(str(c.status))}")
+        mood = f"<br><span style='color:{theme.ACCENT_CYAN}'>mood: {escape(str(c.mood))}</span>" if c.mood else ""
+        self.facts.setText(f"{escape(str(c.role))} · {escape(str(c.seat))}<br>{escape(str(c.model))}{mood}")
         self.usage.set_value(c.usage_pct)
 
 
@@ -580,10 +588,10 @@ class ChatPanel(GlassPanel):
         inner.setContentsMargins(16, 12, 16, 12)
         inner.setSpacing(10)
         if m.title:
-            t = QLabel(m.title)
+            t = plain(QLabel(m.title))
             t.setStyleSheet("font-size: 18px; font-weight: 600; background: transparent;")
             inner.addWidget(t)
-        lab = QLabel(m.text)
+        lab = plain(QLabel(m.text))
         lab.setWordWrap(True)
         lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         lab.setStyleSheet("font-size: 14px; background: transparent; line-height: 140%;")
@@ -671,11 +679,11 @@ class ProposalCard(QFrame):
         v = QVBoxLayout(self)
         v.setContentsMargins(16, 12, 16, 12)
         v.setSpacing(6)
-        head = QLabel(f"💡  <b>An idea from Omi:</b> {info.get('title', '')}")
+        head = QLabel(f"💡  <b>An idea from Omi:</b> {escape(str(info.get('title', '')))}")
         head.setWordWrap(True)
         head.setStyleSheet(f"color: {theme.ACCENT_CYAN}; font-size: 14px; background: transparent;")
         v.addWidget(head)
-        body = QLabel(str(info.get("goal") or "") + (f"<br><span style='color:{theme.TEXT_DIM}'>Why: {info.get('why')}</span>"
+        body = QLabel(escape(str(info.get("goal") or "")) + (f"<br><span style='color:{theme.TEXT_DIM}'>Why: {escape(str(info.get('why')))}</span>"
                                                        if info.get("why") else ""))
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -720,7 +728,7 @@ class OwnStrip(QFrame):
                            "QLabel { background: transparent; border: none; }")
         h = QHBoxLayout(self)
         h.setContentsMargins(12, 4, 6, 4)
-        self.label = QLabel("On their own today: …")
+        self.label = plain(QLabel("On their own today: …"))
         self.label.setObjectName("dim")
         self.label.setToolTip("Work the bots started by themselves today: Omi's checks, repairs, next rounds, routines, the night shift")
         h.addWidget(self.label, 1)
@@ -755,7 +763,7 @@ class VerdictCard(QFrame):
         v = QVBoxLayout(self)
         v.setContentsMargins(16, 12, 16, 12)
         v.setSpacing(8)
-        head = QLabel(f"<b>How did it go?</b>  <span style='color:{theme.TEXT_DIM}'>{str(data.get('goal', ''))[:90]}</span>")
+        head = QLabel(f"<b>How did it go?</b>  <span style='color:{theme.TEXT_DIM}'>{escape(str(data.get('goal', ''))[:90])}</span>")
         head.setWordWrap(True)
         head.setStyleSheet("font-size: 14px; background: transparent;")
         v.addWidget(head)
@@ -766,7 +774,7 @@ class VerdictCard(QFrame):
         v.addWidget(hint)
         v.addLayout(self._row(None, "The whole goal", data.get("verdict")))
         for c in data.get("claims", []):
-            v.addLayout(self._row(c["id"], f"<b>{c['bot_name']}</b>: {c['text'][:110]}", c.get("verdict")))
+            v.addLayout(self._row(c["id"], f"<b>{escape(str(c['bot_name']))}</b>: {escape(str(c['text'])[:110])}", c.get("verdict")))
         self.note = QLineEdit()
         self.note.setPlaceholderText("Optional note (what to repeat, what to do differently)…")
         v.addWidget(self.note)
@@ -833,13 +841,14 @@ class ApprovalCard(QFrame):
         v.setContentsMargins(16, 12, 16, 12)
         v.setSpacing(8)
         why = {"R4": "costs money", "R5": "can't be undone"}.get(str(info.get("risk")), "needs your OK")
-        who = (info.get("rehearsal") or {}).get("bot_name") or (info.get("rehearsal") or {}).get("bot") or "a bot"
+        who = escape(str((info.get("rehearsal") or {}).get("bot_name") or (info.get("rehearsal") or {}).get("bot") or "a bot"))
         head = QLabel(f"⏸  <b>Omi asks: more tokens for {who}?</b> (background work, today)" if tokens else
-                      f"⚠  Needs your OK: <b>{info.get('tool')}</b> ({info.get('risk')}, {why})")
+                      f"⚠  Needs your OK: <b>{escape(str(info.get('tool')))}</b> ({escape(str(info.get('risk')))}, {why})")
         head.setStyleSheet(f"color: {edge}; font-size: 14px; background: transparent;")
         v.addWidget(head)
-        body = QLabel(str(info.get("summary") or "") + (f"<br><span style='color:{theme.TEXT_DIM}'>on {info.get('host')}</span>"
-                                                          if info.get("host") else ""))
+        body = QLabel(escape(str(info.get("summary") or "")) + (f"<br><span style='color:{theme.TEXT_DIM}'>on {escape(str(info.get('host')))}</span>"
+                                                                  if info.get("host") else ""))
+        body.setTextFormat(Qt.TextFormat.RichText)
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         body.setStyleSheet("font-size: 14px; background: transparent;")
@@ -847,9 +856,9 @@ class ApprovalCard(QFrame):
         if info.get("rehearsal"):
             import json as _json
             r = info["rehearsal"]
-            details = QLabel(f"Used today {int(r.get('used_today', 0)):,}  ·  allocated {int(r.get('allocated_today', 0)):,}  ·  "
+            details = plain(QLabel(f"Used today {int(r.get('used_today', 0)):,}  ·  allocated {int(r.get('allocated_today', 0)):,}  ·  "
                              f"asking for {int(r.get('asking_for', 0)):,}" if tokens else
-                             _json.dumps(r, indent=1, ensure_ascii=False)[:600])
+                             _json.dumps(r, indent=1, ensure_ascii=False)[:600]))
             details.setWordWrap(True)
             details.setStyleSheet(f"color: {theme.TEXT_DIM}; font-family: Consolas, monospace; font-size: 12px; background: transparent;")
             v.addWidget(details)
@@ -1233,7 +1242,7 @@ class BoardPanel(GlassPanel):
         col = QVBoxLayout()
         col.setSpacing(2)
         top = QHBoxLayout()
-        who = QLabel(f"<b>{e.sender}</b>" + (f" <span style='color:{theme.TEXT_DIM}'>→</span> {e.recipient}" if e.recipient else ""))
+        who = QLabel(f"<b>{escape(str(e.sender))}</b>" + (f" <span style='color:{theme.TEXT_DIM}'>→</span> {escape(str(e.recipient))}" if e.recipient else ""))
         who.setStyleSheet("font-size: 12px; background: transparent;")
         top.addWidget(who)
         col_hex = MSG_COLORS.get(e.mtype, theme.TEXT_DIM)
@@ -1246,7 +1255,7 @@ class BoardPanel(GlassPanel):
         when.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 10px; background: transparent;")
         top.addWidget(when)
         col.addLayout(top)
-        txt = QLabel(e.text if len(e.text) <= 240 else e.text[:237] + "…")
+        txt = plain(QLabel(e.text if len(e.text) <= 240 else e.text[:237] + "…"))
         txt.setWordWrap(True)
         txt.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         txt.setStyleSheet(f"color: {theme.TEXT}; font-size: 12px; background: transparent;")
@@ -1281,8 +1290,8 @@ class ActivityList(QFrame):
     def set(self, bot_id: str, name: str, role: str, status: str, action: str) -> None:
         dot = STATUS_DOT.get(status, theme.TEXT_DIM)
         text = (f"<span style='color:{dot}; font-size:14px'>●</span>&nbsp; "
-                f"<b style='color:{theme.role_color(role)}'>{name}</b>"
-                f"<span style='color:{theme.TEXT_DIM}'> – </span>{action}")
+                f"<b style='color:{theme.role_color(role)}'>{escape(str(name))}</b>"
+                f"<span style='color:{theme.TEXT_DIM}'> – </span>{escape(str(action))}")
         if bot_id not in self.rows:
             lab = QLabel()
             lab.setStyleSheet("background: transparent; font-size: 12px;")

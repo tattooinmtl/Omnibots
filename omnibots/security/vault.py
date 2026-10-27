@@ -48,14 +48,22 @@ def _forget(value: str | None) -> None:
 
 
 def scrub(text: str) -> str:
-    """Replace every known vault value with [secret:<name>]."""
-    if not text or not _values:
+    """Replace every known vault value with [secret:<name>], then every other registered key (provider and gateway
+    keys) and anything shaped like a key with [REDACTED] (security audit 2026-10-27: a project's .env or a config file
+    a bot read reached the model, which a prompt injection could then send out in a web_fetch URL)."""
+    if not text or not isinstance(text, str):
         return text
     with _lock:
         pairs = sorted(_values.items(), key=lambda kv: len(kv[0]), reverse=True)
     for value, name in pairs:
         if value in text:
             text = text.replace(value, f"[secret:{name}]")
+    from omnibots.logging_setup import KEY_SHAPES, REDACTED, known_secrets
+    for value in known_secrets():
+        if value in text:
+            text = text.replace(value, REDACTED)
+    for pat in KEY_SHAPES:
+        text = pat.sub(REDACTED, text)
     return text
 
 

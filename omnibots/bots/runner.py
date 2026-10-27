@@ -155,7 +155,8 @@ class JobRunner:
     def system_prompt(self, prof: BotProfile) -> str:
         base = BOSS_PROMPT if prof.is_boss else WORKER_PROMPT.format(name=prof.name, role=prof.role)
         from omnibots.runtime.context import today_line
-        parts = [base, today_line()]
+        from omnibots.security.untrusted import DATA_RULE
+        parts = [base, DATA_RULE, today_line()]
         if prof.description:
             parts.append(f"Your job description: {prof.description}")
         if prof.skills and not prof.is_boss:
@@ -208,7 +209,8 @@ class JobRunner:
             from omnibots.orchestrator.forge import forge_tool
             reg.add(forge_tool(self.forge))
             for t in self.forge.load_active():             # forged tools the team already made
-                reg.add(t)
+                if t.name not in reg.tools:                # never in place of a built-in (its checks and risk)
+                    reg.add(t)
         return reg
 
     def _browser_for(self, ctx):

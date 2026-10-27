@@ -211,6 +211,10 @@ class Engine:
                                 keep_awake=self.keep_awake, listener=self._bot_listener, vault=self.vault, budget=self.budget, **pools)
         self.forge = ToolForge(self.db, self.home, self.runner.sandbox, self.router, bus=self.bus)   # A10.b.01
         self.runner.forge = self.forge
+        try:
+            await self.forge.describe_missing()          # tools forged before they ran sandboxed get a manifest
+        except Exception:
+            log.exception("could not describe the forged tools")
         from omnibots.runtime.computer_tools import ComputerClient              # A10.f.04: each bot's own computer
         self.computers = ComputerClient(lambda bot: self.vault.value(f"computer_{bot}"),
                                         owner_key=self._computers_owner_key, store_secret=self._store_computer_login)

@@ -46,6 +46,24 @@ class BrowserSession:
         self._page = None
         self._lock = asyncio.Lock()
         self.current_url = ""            # updated on every navigation, so the vault can host-check a fill_secret
+        self.allow_loopback = False      # set per navigate (allow_internal): a local dev server, nothing else private
+
+    async def guard(self, route) -> None:
+        """Every request the page makes (redirects, scripts, images, fetch/XHR, links clicked) passes the same
+        public-address check as web_fetch: only the first URL was checked before (security audit 2026-10-27)."""
+        url = route.request.url
+        if not url.lower().startswith(("http:", "https:")):
+            if url.lower().startswith(("data:", "blob:", "about:")):
+                await route.continue_()
+            else:
+                await route.abort("blockedbyclient")
+            return
+        try:
+            await assert_public_url(url, allow_loopback=self.allow_loopback)
+        except ValueError:
+            await route.abort("blockedbyclient")
+            return
+        await route.continue_()
 
     async def page(self):
         async with self._lock:
@@ -59,7 +77,8 @@ class BrowserSession:
             self._ctx = await self._pw.chromium.launch_persistent_context(
                 str(self.profile_dir), headless=self.headless, viewport={"width": 1280, "height": 900},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) OmniBots/0.1 Chrome/153 Safari/537.36",
-                args=["--disable-blink-features=AutomationControlled"])
+                args=["--disable-blink-features=AutomationControlled"], service_workers="block")
+            await self._ctx.route("**/*", self.guard)
             self._page = self._ctx.pages[0] if self._ctx.pages else await self._ctx.new_page()
             self._page.set_default_timeout(20000)
             return self._page
@@ -125,6 +144,7 @@ def browser_tools(session_for) -> list[Tool]:
         except ValueError as exc:
             return f"ERROR: {exc}"
         sess = session_for(ctx)
+        sess.allow_loopback = bool(args.get("allow_internal"))
         page = await sess.page()
         try:
             await page.goto(url, wait_until="domcontentloaded")

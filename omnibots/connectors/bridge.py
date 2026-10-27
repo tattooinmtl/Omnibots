@@ -33,6 +33,15 @@ HELP = ("I'm Omi, the boss of your OmniBots team.\n"
 NOISY = {"SEAT_GRANTED", "SEAT_RELEASED", "SEAT_WAITING"}
 
 
+def safe_name(name: str) -> str:
+    """A file name from a chat message as a plain name in the download folder: never a path (`..\\..\\x`, `C:\\x`),
+    never a reserved device name, never empty (security audit 2026-10-27)."""
+    base = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(name).replace("\\", "/").rsplit("/", 1)[-1]).strip(" .")
+    if re.fullmatch(r"(?i)(con|prn|aux|nul|com\d|lpt\d)(\..*)?", base):
+        base = "_" + base
+    return base[:120] or "file"
+
+
 @dataclass
 class Button:
     text: str

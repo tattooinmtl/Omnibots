@@ -18,7 +18,7 @@ from urllib.parse import quote
 
 import httpx
 
-from omnibots.connectors.bridge import ChatBridge, Outgoing
+from omnibots.connectors.bridge import ChatBridge, Outgoing, safe_name
 
 log = logging.getLogger(__name__)
 API = "https://discord.com/api/v10"
@@ -115,7 +115,7 @@ class DiscordBridge(ChatBridge):
                 if int(a.get("size") or 0) <= MAX_FILE:
                     r = await self._request("GET", a["url"])
                     if r.status_code < 400:
-                        p = self.files_dir / a.get("filename", f"file-{a['id']}")
+                        p = self.files_dir / safe_name(a.get("filename") or f"file-{a['id']}")
                         p.write_bytes(r.content)
                         files.append(p)
             await self.on_message(self.owner, m.get("content") or "", files)

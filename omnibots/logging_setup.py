@@ -17,13 +17,23 @@ from pathlib import Path
 
 REDACTED = "[REDACTED]"
 
-_PATTERNS = [
+# Strings shaped like a provider key or token. Also what a model never sees (security.vault.scrub).
+KEY_SHAPES = [
     re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{12,}"),
     re.compile(r"\bnvapi-[A-Za-z0-9_\-]{12,}"),
     re.compile(r"\batr_[A-Za-z0-9_\-]{12,}"),
     re.compile(r"\bgsk_[A-Za-z0-9]{12,}"),
+    re.compile(r"\bxai-[A-Za-z0-9]{20,}"),
+    re.compile(r"\bAIza[0-9A-Za-z_\-]{30,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"\bxox[abprs]-[A-Za-z0-9\-]{10,}"),
     re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{5,}"),  # JWT
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)"),
+]
+
+_PATTERNS = [
+    *KEY_SHAPES,
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}"),
     re.compile(
         r"(?i)(\b[\w\-]*(?:api[_\-]?key|apikey|token|secret|password|passwd)[\w\-]*\b\s*[=:]\s*[\"']?)"
@@ -42,6 +52,12 @@ def register_secret(value: str | None) -> None:
     if value and len(value) >= 6:
         with _known_lock:
             _known.add(value)
+
+
+def known_secrets() -> list[str]:
+    """Every value registered with register_secret (provider keys, gateway keys, vault values), longest first."""
+    with _known_lock:
+        return sorted(_known, key=len, reverse=True)
 
 
 def redact(text: str) -> str:
